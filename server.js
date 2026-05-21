@@ -15,7 +15,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.get('/proxy/mexc/kline', async (req, res) => {
   try {
     const { symbol, interval, limit } = req.query;
-    const response = await axios.get('https://api.mexc.com/api/v1/contract/kline/' + symbol, {
+    const response = await axios.get('https://api.mexc.com/api/v1/contract/kline/SNX_USDT', {
       params: { interval, limit },
       timeout: 10000,
       headers: HEADERS
