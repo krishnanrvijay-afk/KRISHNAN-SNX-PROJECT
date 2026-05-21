@@ -485,17 +485,18 @@ async function fetchCandles(limit) {
   try {
     const r = await fetch('/proxy/mexc/kline?symbol=SNXUSDT&interval=Min1&limit=' + limit);
     const d = await r.json();
-    if (!d.success) return [];
+    if (!d || !d.success || !d.data) return [];
     const raw = d.data;
+    if (!raw.time || !raw.time.length) return [];
     const out = [];
     for (let i = 0; i < raw.time.length; i++) {
-      out.push({
-        ts:    raw.time[i] * 1000,
-        open:  +raw.open[i],
-        high:  +raw.high[i],
-        low:   +raw.low[i],
-        close: +raw.close[i]
-      });
+      const ts    = raw.time[i];
+      const open  = parseFloat(raw.open[i]);
+      const high  = parseFloat(raw.high[i]);
+      const low   = parseFloat(raw.low[i]);
+      const close = parseFloat(raw.close[i]);
+      if (!ts || isNaN(close)) continue;
+      out.push({ ts: ts * 1000, open, high, low, close });
     }
     return out.sort((a,b) => a.ts - b.ts);
   } catch(e) {
@@ -531,6 +532,7 @@ function updateZone(price) {
     setupTP    = s.tp;
     setupSL    = s.sl;
     addAlert('ZONE', 'Reset @ ' + price.toFixed(4) + '  E:' + setupEntry.toFixed(4) + ' TP:' + setupTP.toFixed(4) + ' SL:' + setupSL.toFixed(4), 'yellow');
+    enterTrade();
   }
 }
 
