@@ -83,10 +83,11 @@
   /* ── SIGNAL CARD ── */
   .signal-wrap {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr;
     gap: 8px;
     margin-bottom: 10px;
   }
+  #shortCard { display: none; }
   .sig-card {
     border-radius: 5px;
     padding: 14px;
@@ -309,7 +310,7 @@
 <div class="hdr">
   <div>
     <div class="hdr-title">SNX <em>TICK</em> SCALPER</div>
-    <div class="hdr-sub">1m · Bidirectional · Maker/Taker fee model</div>
+    <div class="hdr-sub">1m · LONG only · Sticky zone · Maker/Taker fee model</div>
   </div>
   <div class="hdr-right">
     <div class="hdr-clock"><span class="dot green" id="liveDot"></span><span id="clock">--:--:-- EST</span></div>
@@ -434,19 +435,17 @@
 </div>
 
 <div class="footer">
-  SNXUSDT · 1m · $1,400 margin · 100x · $140,000 notional · maker entry+TP / taker SL · paper mode
+  SNXUSDT · 1m · LONG only · $1,400 margin · 100x · $140,000 notional · maker entry+TP / taker SL only · paper mode
 </div>
 
 <script>
 // ── CONFIG ────────────────────────────────────────────────────────────────────
 const NOTIONAL   = 140000;
 const TAKER_FEE  = 0.0002;
-const MAKER_FEE  = 0;
-const POLL_MS    = 10000;       // 10s — faster for 1m candles
-const CANDLES    = 30;          // fetch last 30 x 1m candles
+const POLL_MS    = 10000;
+const CANDLES    = 30;
 const TP_TICKS   = 1;
 const SL_TICKS   = 2;
-const BOUNCE_LOOKBACK = 5;      // candles to detect bounce
 
 // ── STATE ─────────────────────────────────────────────────────────────────────
 let candles      = [];
@@ -460,6 +459,12 @@ let signals      = 0;
 let sessionStart = Date.now();
 let holdInterval = null;
 
+// Zone tracking — only reset setup when price moves outside ± 1 tick
+let zonePrice    = null;   // price when zone was last set
+let setupEntry   = null;   // locked entry
+let setupTP      = null;   // locked TP
+let setupSL      = null;   // locked SL
+
 // ── TIME ──────────────────────────────────────────────────────────────────────
 function nowEST() { return new Date(Date.now() - 5 * 3600000); }
 function estHour() { return nowEST().getUTCHours(); }
@@ -470,7 +475,7 @@ function fmtTime(ms) {
 function sessionName(h) {
   if (h >= 0  && h < 3)  return 'Asia';
   if (h >= 3  && h < 9)  return 'London';
-  if (h >= 9  && h < 11) return 'NY Open ⚠';
+  if (h >= 9  && h < 11) return 'NY Open';
   if (h >= 11 && h < 21) return 'NY Session';
   return 'Late';
 }
@@ -509,112 +514,76 @@ function inferTick(c) {
   return diffs.length ? Math.min(...diffs) : 0.0001;
 }
 
-// ── P&L ──────────────────────────────────────────────────────────────────────
-function projWin(entryPrice) {
-  // 1 tick move, maker entry + maker TP = $0 fees
-  return NOTIONAL * tick / entryPrice;
+// ── SETUP LEVELS ──────────────────────────────────────────────────────────────
+function calcSetup(price) {
+  const entry = +(price - tick).toFixed(6);
+  const tp    = +(entry + TP_TICKS * tick).toFixed(6);
+  const sl    = +(entry - SL_TICKS * tick).toFixed(6);
+  return { entry, tp, sl };
 }
-function projLoss(entryPrice) {
-  // SL hit = taker fee on close only
-  const slMove = SL_TICKS * tick;
-  return -(NOTIONAL * slMove / entryPrice) - (TAKER_FEE * NOTIONAL);
+
+function updateZone(price) {
+  // First time or price moved outside ± 1 tick of zone price — reset
+  if (zonePrice === null || Math.abs(price - zonePrice) > tick * 1.5) {
+    zonePrice = price;
+    const s   = calcSetup(price);
+    setupEntry = s.entry;
+    setupTP    = s.tp;
+    setupSL    = s.sl;
+    addAlert('ZONE', 'Reset @ ' + price.toFixed(4) + '  E:' + setupEntry.toFixed(4) + ' TP:' + setupTP.toFixed(4) + ' SL:' + setupSL.toFixed(4), 'yellow');
+  }
+}
+
+// ── P&L ──────────────────────────────────────────────────────────────────────
+function projWin(entry) {
+  return NOTIONAL * tick / entry;   // maker entry + maker TP = $0 fee
 }
 function fmtPnl(v) {
   return (v >= 0 ? '+' : '') + '$' + Math.abs(v).toFixed(2);
 }
 
-// ── BOUNCE DETECTION ─────────────────────────────────────────────────────────
-function detectSignal(c) {
-  if (c.length < BOUNCE_LOOKBACK + 1) return null;
-  const recent  = c.slice(-BOUNCE_LOOKBACK);
-  const last    = c[c.length - 1];
-  const prev    = c[c.length - 2];
-
-  const recentH = Math.max(...recent.map(x => x.high));
-  const recentL = Math.min(...recent.map(x => x.low));
-  const range   = recentH - recentL;
-
-  // Only signal in tight range (max 4 ticks)
-  if (range > 4 * tick) return null;
-
-  const price = last.close;
-
-  // Long signal: price near recent low and last candle is bullish
-  const nearLow  = Math.abs(price - recentL) <= tick;
-  const bullCandle = last.close > last.open;
-
-  // Short signal: price near recent high and last candle is bearish
-  const nearHigh   = Math.abs(price - recentH) <= tick;
-  const bearCandle = last.close < last.open;
-
-  if (nearLow && bullCandle && prev.close < prev.open) {
-    return { side: 'LONG',  entry: recentL, range: range };
-  }
-  if (nearHigh && bearCandle && prev.close > prev.open) {
-    return { side: 'SHORT', entry: recentH, range: range };
-  }
-  return null;
-}
-
 // ── PAPER TRADE ───────────────────────────────────────────────────────────────
-function enterTrade(signal) {
-  if (openTrade) return;  // already in a trade
-  const { side, entry } = signal;
-  const tp = side === 'LONG'
-    ? +(entry + TP_TICKS * tick).toFixed(6)
-    : +(entry - TP_TICKS * tick).toFixed(6);
-  const sl = side === 'LONG'
-    ? +(entry - SL_TICKS * tick).toFixed(6)
-    : +(entry + SL_TICKS * tick).toFixed(6);
-
-  openTrade = { side, entry, tp, sl, ts: Date.now() };
+function enterTrade() {
+  if (openTrade || !setupEntry) return;
+  openTrade = {
+    side:  'LONG',
+    entry: setupEntry,
+    tp:    setupTP,
+    sl:    setupSL,
+    ts:    Date.now()
+  };
   signals++;
   startHoldTimer();
-  addAlert('▶', side + ' @' + entry.toFixed(4) + '  TP:' + tp.toFixed(4) + '  SL:' + sl.toFixed(4), side === 'LONG' ? 'green' : 'red');
+  addAlert('BUY', 'LONG @' + setupEntry.toFixed(4) + '  TP:' + setupTP.toFixed(4) + '  SL:' + setupSL.toFixed(4), 'green');
 }
 
 function checkExit(price) {
   if (!openTrade) return;
-  const { side, entry, tp, sl, ts } = openTrade;
+  const { entry, tp, sl, ts } = openTrade;
   let closed = false;
   let reason = '';
   let exitPrice = price;
   let net = 0;
 
-  if (side === 'LONG' && price >= tp) {
+  if (price >= tp) {
     exitPrice = tp;
-    net = NOTIONAL * (tp - entry) / entry;  // maker TP, no fee
+    net    = NOTIONAL * (tp - entry) / entry;   // maker TP — no fee
     reason = 'TP';
     closed = true;
-  } else if (side === 'SHORT' && price <= tp) {
-    exitPrice = tp;
-    net = NOTIONAL * (entry - tp) / entry;  // maker TP, no fee
-    reason = 'TP';
-    closed = true;
-  } else if (side === 'LONG' && price <= sl) {
+  } else if (price <= sl) {
     exitPrice = sl;
-    net = -(NOTIONAL * (entry - sl) / entry) - (TAKER_FEE * NOTIONAL);
+    net    = -(NOTIONAL * (entry - sl) / entry) - (TAKER_FEE * NOTIONAL);
     reason = 'SL';
     closed = true;
-  } else if (side === 'SHORT' && price >= sl) {
-    exitPrice = sl;
-    net = -(NOTIONAL * (sl - entry) / entry) - (TAKER_FEE * NOTIONAL);
-    reason = 'SL';
-    closed = true;
-  }
-
-  // Auto-close after 3 minutes at market
-  if (!closed && Date.now() - ts > 180000) {
-    net = side === 'LONG'
-      ? NOTIONAL * (price - entry) / entry - TAKER_FEE * NOTIONAL
-      : NOTIONAL * (entry - price) / entry - TAKER_FEE * NOTIONAL;
+  } else if (Date.now() - ts > 180000) {
+    net    = NOTIONAL * (price - entry) / entry - TAKER_FEE * NOTIONAL;
     reason = 'TIME';
     closed = true;
   }
 
   if (closed) {
     const trade = {
-      side, entry, exit: exitPrice, tp, sl,
+      side: 'LONG', entry, exit: exitPrice, tp, sl,
       ts, tsClose: Date.now(),
       net: +net.toFixed(2),
       outcome: net > 0 ? 'WIN' : 'LOSS',
@@ -624,8 +593,7 @@ function checkExit(price) {
     localStorage.setItem('snx_tick_trades', JSON.stringify(trades));
     openTrade = null;
     stopHoldTimer();
-    const icon = net > 0 ? 'WIN' : 'LOSS';
-    addAlert(icon, side + ' ' + reason + ' @' + exitPrice.toFixed(4) + ' ' + fmtPnl(net), net > 0 ? 'green' : 'red');
+    addAlert(net > 0 ? 'WIN' : 'LOSS', 'LONG ' + reason + ' @' + exitPrice.toFixed(4) + ' ' + fmtPnl(net), net > 0 ? 'green' : 'red');
     renderLog();
     renderStats();
   }
@@ -633,16 +601,14 @@ function checkExit(price) {
 
 // ── HOLD TIMER ────────────────────────────────────────────────────────────────
 function startHoldTimer() {
-  const el = document.getElementById('holdTimer');
-  el.style.display = 'flex';
+  document.getElementById('holdTimer').style.display = 'flex';
   holdInterval = setInterval(() => {
     if (!openTrade) return;
     const secs = Math.floor((Date.now() - openTrade.ts) / 1000);
     const m = Math.floor(secs / 60);
     const s = String(secs % 60).padStart(2, '0');
     document.getElementById('holdTime').textContent = m + ':' + s;
-    document.getElementById('holdSide').textContent = openTrade.side + ' @' + openTrade.entry.toFixed(4);
-    // Turn red after 2.5 minutes
+    document.getElementById('holdSide').textContent = 'LONG @' + openTrade.entry.toFixed(4);
     document.getElementById('holdTime').style.color = secs > 150 ? 'var(--red)' : 'var(--yellow)';
   }, 1000);
 }
@@ -670,65 +636,44 @@ function renderPrices(last, chg) {
   document.getElementById('tickSize').textContent  = tick.toFixed(5);
 }
 
-function renderSignals(price) {
-  const longEntry  = +(price - tick).toFixed(6);
-  const longTP     = +(longEntry + TP_TICKS * tick).toFixed(6);
-  const longSL     = +(longEntry - SL_TICKS * tick).toFixed(6);
-  const shortEntry = +(price + tick).toFixed(6);
-  const shortTP    = +(shortEntry - TP_TICKS * tick).toFixed(6);
-  const shortSL    = +(shortEntry + SL_TICKS * tick).toFixed(6);
+function renderLong() {
+  if (!setupEntry) return;
   const lc = document.getElementById('longCard');
-  const sc = document.getElementById('shortCard');
-  if (!openTrade) {
-    document.getElementById('longEntry').textContent  = longEntry.toFixed(4);
-    document.getElementById('longTP').textContent     = longTP.toFixed(4);
-    document.getElementById('longSL').textContent     = longSL.toFixed(4);
-    document.getElementById('longProj').textContent   = fmtPnl(projWin(longEntry));
-    document.getElementById('shortEntry').textContent = shortEntry.toFixed(4);
-    document.getElementById('shortTP').textContent    = shortTP.toFixed(4);
-    document.getElementById('shortSL').textContent    = shortSL.toFixed(4);
-    document.getElementById('shortProj').textContent  = fmtPnl(projWin(shortEntry));
-    lc.className = 'sig-card';
-    sc.className = 'sig-card';
-  } else if (openTrade.side === 'LONG') {
-    document.getElementById('longEntry').textContent  = openTrade.entry.toFixed(4);
-    document.getElementById('longTP').textContent     = openTrade.tp.toFixed(4);
-    document.getElementById('longSL').textContent     = openTrade.sl.toFixed(4);
-    document.getElementById('longProj').textContent   = fmtPnl(projWin(openTrade.entry));
-    document.getElementById('shortEntry').textContent = shortEntry.toFixed(4);
-    document.getElementById('shortTP').textContent    = shortTP.toFixed(4);
-    document.getElementById('shortSL').textContent    = shortSL.toFixed(4);
-    document.getElementById('shortProj').textContent  = fmtPnl(projWin(shortEntry));
+
+  if (openTrade) {
+    // Trade active — lock values, highlight card
+    document.getElementById('longEntry').textContent = openTrade.entry.toFixed(4);
+    document.getElementById('longTP').textContent    = openTrade.tp.toFixed(4);
+    document.getElementById('longSL').textContent    = openTrade.sl.toFixed(4);
+    document.getElementById('longProj').textContent  = fmtPnl(projWin(openTrade.entry));
     lc.className = 'sig-card long-active';
-    sc.className = 'sig-card waiting';
   } else {
-    document.getElementById('shortEntry').textContent = openTrade.entry.toFixed(4);
-    document.getElementById('shortTP').textContent    = openTrade.tp.toFixed(4);
-    document.getElementById('shortSL').textContent    = openTrade.sl.toFixed(4);
-    document.getElementById('shortProj').textContent  = fmtPnl(projWin(openTrade.entry));
-    document.getElementById('longEntry').textContent  = longEntry.toFixed(4);
-    document.getElementById('longTP').textContent     = longTP.toFixed(4);
-    document.getElementById('longSL').textContent     = longSL.toFixed(4);
-    document.getElementById('longProj').textContent   = fmtPnl(projWin(longEntry));
-    lc.className = 'sig-card waiting';
-    sc.className = 'sig-card short-active';
+    // No trade — show current setup levels
+    document.getElementById('longEntry').textContent = setupEntry.toFixed(4);
+    document.getElementById('longTP').textContent    = setupTP.toFixed(4);
+    document.getElementById('longSL').textContent    = setupSL.toFixed(4);
+    document.getElementById('longProj').textContent  = fmtPnl(projWin(setupEntry));
+    lc.className = 'sig-card';
   }
 }
 
 function renderLadder(price) {
   const rows = [];
-  // Show 3 ticks above and below current price
   for (let i = 3; i >= -3; i--) {
     const p = +(price + i * tick).toFixed(6);
     let tag = '';
     let tagClass = '';
 
     if (openTrade) {
-      if (Math.abs(p - openTrade.tp) < tick * 0.1) { tag = 'TP'; tagClass = openTrade.side === 'LONG' ? 'tag-tp-long' : 'tag-tp-short'; }
-      else if (Math.abs(p - openTrade.entry) < tick * 0.1) { tag = 'ENTRY'; tagClass = 'tag-entry'; }
-      else if (Math.abs(p - openTrade.sl) < tick * 0.1)    { tag = 'SL';    tagClass = 'tag-sl'; }
+      if (Math.abs(p - openTrade.tp)    < tick * 0.5) { tag = 'TP';    tagClass = 'tag-tp-long'; }
+      else if (Math.abs(p - openTrade.entry) < tick * 0.5) { tag = 'ENTRY'; tagClass = 'tag-entry'; }
+      else if (Math.abs(p - openTrade.sl)    < tick * 0.5) { tag = 'SL';    tagClass = 'tag-sl'; }
+    } else if (setupEntry) {
+      if (Math.abs(p - setupTP)    < tick * 0.5) { tag = 'TP';    tagClass = 'tag-tp-long'; }
+      else if (Math.abs(p - setupEntry) < tick * 0.5) { tag = 'ENTRY'; tagClass = 'tag-entry'; }
+      else if (Math.abs(p - setupSL)    < tick * 0.5) { tag = 'SL';    tagClass = 'tag-sl'; }
     }
-    if (Math.abs(p - price) < tick * 0.1) { tag = 'NOW'; tagClass = 'tag-current'; }
+    if (Math.abs(p - price) < tick * 0.5) { tag = 'NOW'; tagClass = 'tag-current'; }
 
     const arrow = i > 0 ? '▲' : i < 0 ? '▼' : '●';
     const col   = i > 0 ? 'green' : i < 0 ? 'red' : 'blue';
@@ -744,46 +689,38 @@ function renderLadder(price) {
 }
 
 function renderCandles(c) {
-  const strip = document.getElementById('candleStrip');
+  const strip  = document.getElementById('candleStrip');
   const last20 = c.slice(-20);
   if (!last20.length) return;
-
-  const maxH = Math.max(...last20.map(x => x.high));
-  const minL = Math.min(...last20.map(x => x.low));
+  const maxH  = Math.max(...last20.map(x => x.high));
+  const minL  = Math.min(...last20.map(x => x.low));
   const range = maxH - minL || 0.001;
-
   strip.innerHTML = last20.map((x, i) => {
     const pct  = Math.max(4, ((x.high - x.low) / range) * 100);
     const bull = x.close >= x.open;
-    const cls  = bull ? 'bull' : 'bear';
     const last = i === last20.length - 1 ? ' last' : '';
-    return '<div class="candle-bar ' + cls + last + '" style="height:' + pct + '%"></div>';
+    return '<div class="candle-bar ' + (bull ? 'bull' : 'bear') + last + '" style="height:' + pct + '%"></div>';
   }).join('');
-
-  const first = last20[0];
-  const last  = last20[last20.length - 1];
   document.getElementById('candleRange').textContent =
-    fmtTime(first.ts) + ' → ' + fmtTime(last.ts) + ' EST';
+    fmtTime(last20[0].ts) + ' to ' + fmtTime(last20[last20.length-1].ts) + ' EST';
 }
 
 function renderLog() {
-  const rows    = [...trades].reverse().slice(0, 12);
+  const rows     = [...trades].reverse().slice(0, 12);
   const totalNet = trades.reduce((s,t) => s + t.net, 0);
   const el = document.getElementById('totalNet');
   el.textContent = 'Net: ' + fmtPnl(totalNet);
   el.style.color = totalNet >= 0 ? 'var(--green)' : 'var(--red)';
-
   if (!rows.length) {
     document.getElementById('logRows').innerHTML =
       '<div style="color:var(--muted);font-size:10px;padding:6px 0">Waiting for first tick signal...</div>';
     return;
   }
-
   document.getElementById('logRows').innerHTML = rows.map(t => {
     const cls = t.net >= 0 ? 'green' : 'red';
     return '<div class="log-row">' +
-      '<span class="log-side ' + t.side.toLowerCase() + '">' + t.side.slice(0,1) + '</span>' +
-      '<span class="log-reason ' + (t.reason === 'TP' ? 'green' : t.reason === 'SL' ? 'red' : 'yellow') + '">' + t.reason + '</span>' +
+      '<span class="log-side long">L</span>' +
+      '<span class="log-reason ' + (t.reason==='TP'?'green':t.reason==='SL'?'red':'yellow') + '">' + t.reason + '</span>' +
       '<span>' + t.entry.toFixed(4) + '</span>' +
       '<span>' + t.exit.toFixed(4) + '</span>' +
       '<span class="log-pnl ' + cls + '">' + fmtPnl(t.net) + '</span>' +
@@ -793,16 +730,14 @@ function renderLog() {
 }
 
 function renderStats() {
-  const sessionTrades = trades.filter(t => t.ts >= sessionStart);
-  const net  = sessionTrades.reduce((s,t) => s + t.net, 0);
-  const wins = sessionTrades.filter(t => t.outcome === 'WIN').length;
-  const tot  = sessionTrades.length;
-  const wr   = tot ? Math.round(wins / tot * 100) : 0;
-
-  const el = document.getElementById('sessionPnl');
+  const st  = trades.filter(t => t.ts >= sessionStart);
+  const net = st.reduce((s,t) => s + t.net, 0);
+  const wins = st.filter(t => t.outcome === 'WIN').length;
+  const tot  = st.length;
+  const el   = document.getElementById('sessionPnl');
   el.textContent = fmtPnl(net);
   el.style.color = net >= 0 ? 'var(--green)' : 'var(--red)';
-  document.getElementById('winRate').textContent   = tot ? wr + '%' : '--';
+  document.getElementById('winRate').textContent    = tot ? Math.round(wins/tot*100)+'%' : '--';
   document.getElementById('tradeCount').textContent = tot;
   document.getElementById('signalCount').textContent = signals;
 }
@@ -810,11 +745,9 @@ function renderStats() {
 function addAlert(icon, msg, color) {
   alerts.unshift({ icon, msg, color, time: fmtTime(Date.now()) });
   if (alerts.length > 15) alerts.pop();
-  document.getElementById('alertRows').innerHTML = alerts.slice(0, 6).map(a =>
-    '<div class="alert-row">' +
-    '<span class="alert-time">' + a.time + '</span>' +
-    '<span class="' + a.color + '">' + a.icon + ' ' + a.msg + '</span>' +
-    '</div>'
+  document.getElementById('alertRows').innerHTML = alerts.slice(0,6).map(a =>
+    '<div class="alert-row"><span class="alert-time">' + a.time + '</span>' +
+    '<span class="' + a.color + '">' + a.icon + ' ' + a.msg + '</span></div>'
   ).join('');
   document.getElementById('alertCount').textContent = alerts.length;
 }
@@ -827,30 +760,25 @@ async function poll() {
   candles = raw;
   tick    = inferTick(candles);
 
-  const last      = candles[candles.length - 1];
-  const first     = candles[0];
-  const price     = last.close;
-  const pctChg    = (price - first.open) / first.open * 100;
+  const last  = candles[candles.length - 1];
+  const first = candles[0];
+  const price = last.close;
+  const pctChg = (price - first.open) / first.open * 100;
 
   high24 = Math.max(...candles.map(c => c.high));
   low24  = Math.min(...candles.map(c => c.low));
 
   renderPrices(price, pctChg);
-  renderSignals(price);
+
+  // Update zone — only resets setup if price moves outside ± 1 tick
+  if (!openTrade) updateZone(price);
+
+  renderLong();
   renderLadder(price);
   renderCandles(candles);
 
-  // Check exit first
+  // Check exit on open trade
   if (openTrade) checkExit(price);
-
-  // Detect new signal only if not in a trade
-  if (!openTrade) {
-    const sig = detectSignal(candles);
-    if (sig) {
-      enterTrade(sig);
-      renderStats();
-    }
-  }
 }
 
 // ── INIT ──────────────────────────────────────────────────────────────────────
@@ -858,7 +786,9 @@ setInterval(renderClock, 1000);
 renderClock();
 renderLog();
 renderStats();
-addAlert('GO', 'SNX Tick Scalper started · 1m · bidirectional', 'green');
+// Hide hold timer on load
+document.getElementById('holdTimer').style.display = 'none';
+addAlert('GO', 'SNX Tick Scalper v2 started · LONG only · sticky zone', 'green');
 poll();
 setInterval(poll, POLL_MS);
 </script>
