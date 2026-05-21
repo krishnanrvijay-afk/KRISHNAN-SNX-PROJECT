@@ -368,7 +368,7 @@ function renderTicker(sym) {
       '<div><div class="setup-item-label">Take Profit</div><div class="setup-item-value green">' + fmtPrice(isArmed?st.oscUpper:setup.tp, st.tick) + '</div></div>' +
       '<div><div class="setup-item-label">Stop Loss</div><div class="setup-item-value red">' + fmtPrice(isArmed?(st.oscLower-2*st.tick):setup.sl, st.tick) + '</div></div>' +
     '</div>' +
-    '<div class="setup-note">$1,400 margin · 100x · $140k notional · maker entry · taker SL</div>' +
+    '<div class="setup-note">' + (isArmed ? 'Band: ' + fmtPrice(st.oscLower,st.tick) + ' – ' + fmtPrice(st.oscUpper,st.tick) + ' · ' + Math.round((st.oscUpper-st.oscLower)/st.tick) + ' ticks · proj ' + fmtPnl(pnlForRange(st.oscUpper,st.oscLower)) : 'Watching for oscillation pattern') + '</div>' +
     '</div>';
 
   // Recent trades
