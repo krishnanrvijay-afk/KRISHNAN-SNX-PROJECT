@@ -403,7 +403,6 @@ async function poll() {
 }
 
 function clearAllTrades() {
-  if (!confirm('Clear all paper trades?')) return;
   SYMBOLS.forEach(s => {
     state[s].trades = [];
     state[s].oscCount = 0;
