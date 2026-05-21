@@ -307,7 +307,7 @@
 
   <div id="tickerCards"></div>
 
-  <div class="footer">SNX $100·100x·$10k · FIL $1,000·50x·$50k · NEAR $500·100x·$50k · Binance data · paper mode</div>
+  <div class="footer">SNX $100·100x·$10k · FIL $1,000·50x·$50k · NEAR $500·100x·$50k · MEXC data · paper mode</div>
 </div>
 
 <!-- ═══════════════════════════════════════════════════════ TRADE LOG TAB -->
@@ -342,9 +342,9 @@ window.onerror = function(msg, src, line, col, err) {
 };
 // ── CONFIG — Research-validated parameters ────────────────────────────────────
 const TOKEN_CONFIG = {
-  SNXUSDT:  { margin: 100,   leverage: 100, notional: 10000,  maxLeverage: 100, bestHours: [5,18,19],     label: 'SNX' },
-  FILUSDT:  { margin: 1000,  leverage: 50,  notional: 50000,  maxLeverage: 50,  bestHours: [0,1,14,15],   label: 'FIL' },
-  NEARUSDT: { margin: 500,   leverage: 100, notional: 50000,  maxLeverage: 200, bestHours: [20,21,22,23], label: 'NEAR' },
+  SNXUSDT:  { margin: 100,   leverage: 100, notional: 10000,  maxLeverage: 100, contractSize: 0.1, bestHours: [5,18,19],     label: 'SNX' },
+  FILUSDT:  { margin: 1000,  leverage: 50,  notional: 50000,  maxLeverage: 50,  contractSize: 0.01, bestHours: [0,1,14,15],   label: 'FIL' },
+  NEARUSDT: { margin: 500,   leverage: 100, notional: 50000,  maxLeverage: 100, contractSize: 1,   bestHours: [20,21,22,23], label: 'NEAR' },
 };
 const SYMBOLS     = ['SNXUSDT', 'FILUSDT', 'NEARUSDT'];
 const TAKER_FEE   = 0.0002;
@@ -442,7 +442,9 @@ function inferTick(c) {
     const d = Math.abs(c[i].close - c[i-1].close);
     if (d > 0) diffs.push(+d.toFixed(7));
   }
-  return diffs.length ? Math.min(...diffs) : 0.0001;
+  if (!diffs.length) return 0.0001;
+  diffs.sort((a, b) => a - b);
+  return diffs[Math.max(0, Math.floor(diffs.length * 0.05))];
 }
 
 function detectOsc(candles, tick) {
@@ -551,8 +553,8 @@ async function processSym(sym) {
     st.oscLower     = osc.lower;
     st.oscCount++;
     st.action       = isNew && st.prevOscLower > 0 ? 'NEW_SETUP' : 'ARMED';
-    // Arm trade only if price at or above entry level
-    if (last.close >= st.oscLower) {
+    // Arm trade only if price at or above entry level and not in blackout
+    if (last.close >= st.oscLower && !inBlackout()) {
       openTrade(sym, st.oscLower, st.oscUpper, st.oscLower - 2 * st.tick, last.close, last);
     }
 
@@ -567,7 +569,7 @@ async function processSym(sym) {
         if (recentHigh >= st.openLong.target) {
           closeTrade(sym, st.openLong.target, 'TP', recentHigh);
           st.action = 'SAME_TRADE';
-          if (last.close >= st.oscLower) {
+          if (last.close >= st.oscLower && !inBlackout()) {
             openTrade(sym, st.oscLower, st.oscUpper, st.oscLower - 2 * st.tick, last.close, last);
           }
         } else if (recentLow <= st.openLong.sl) {
@@ -575,7 +577,7 @@ async function processSym(sym) {
           st.action = 'NO_TRADE';
         }
       }
-    } else if (last.close >= st.oscLower) {
+    } else if (last.close >= st.oscLower && !inBlackout()) {
       openTrade(sym, st.oscLower, st.oscUpper, st.oscLower - 2 * st.tick, last.close, last);
     }
 
@@ -657,27 +659,13 @@ function renderTicker(sym) {
   const hourBadge = isBestHour(sym)
     ? '<span class="badge badge-green">⭐ PRIME</span>' : '';
 
-  // Action banner
-  let actionHtml = '';
-  const isBlackout = inBlackout();
-  if (isBlackout) {
-    actionHtml = '<div class="action-banner wait"><span class="action-label red">🔴 NO TRADE — BLACKOUT</span><span class="action-levels">Resume 11:00 EDT</span></div>';
-  } else if (st.action === 'SAME_TRADE' && st.inOsc) {
-    actionHtml = '<div class="action-banner same"><span class="action-label green">🟢 SAME TRADE — Re-enter</span><span class="action-levels">E:'+fmtPrice(st.oscLower,st.tick)+'<br>TP:'+fmtPrice(st.oscUpper,st.tick)+'</span></div>';
-  } else if (st.action === 'NEW_SETUP' && st.inOsc) {
-    actionHtml = '<div class="action-banner new"><span class="action-label blue">🔵 NEW SETUP — Update order</span><span class="action-levels">E:'+fmtPrice(st.oscLower,st.tick)+'<br>TP:'+fmtPrice(st.oscUpper,st.tick)+'</span></div>';
-  } else if ((st.action === 'ARMED') && st.inOsc) {
-    actionHtml = '<div class="action-banner armed"><span class="action-label yellow">⚡ ARMED — Place order now</span><span class="action-levels">E:'+fmtPrice(st.oscLower,st.tick)+'<br>TP:'+fmtPrice(st.oscUpper,st.tick)+'</span></div>';
-  } else {
-    actionHtml = '<div class="action-banner wait"><span class="action-label muted">🔴 NO TRADE — Watching</span><span class="action-levels muted">FLAT</span></div>';
-  }
-
   // Setup box
+  const isBlackout = inBlackout();
   const isArmed = st.inOsc && !isBlackout;
   const entryP  = isArmed ? st.oscLower : price - st.tick;
   const tpP     = isArmed ? st.oscUpper : price;
   const slP     = isArmed ? st.oscLower - 2 * st.tick : price - 3 * st.tick;
-  const projNet = isArmed ? (cfg.notional * (tpP - entryP) / entryP - TAKER_FEE * cfg.notional) : 0;
+  const projNet = isArmed ? (cfg.notional * (tpP - entryP) / entryP - MAKER_FEE * cfg.notional) : 0;
 
   // Action strip values
   let actionLabel = '', actionColor = '#4a6272', actionE = '--', actionTP = '--';
@@ -711,6 +699,11 @@ function renderTicker(sym) {
 
   const card = document.getElementById('card_'+sym);
   if (!card) return;
+  const borderCls = isBlackout                          ? 'border-wait'  :
+                    st.action === 'SAME_TRADE' && st.inOsc ? 'border-same'  :
+                    st.action === 'NEW_SETUP'  && st.inOsc ? 'border-new'   :
+                    st.action === 'ARMED'      && st.inOsc ? 'border-armed' :
+                    'border-wait';
   card.className = 'ticker-card ' + borderCls;
   card.innerHTML =
     // ── TOP: Token name + status badges
@@ -873,10 +866,18 @@ function openDetail(tradeId) {
 
 function closeDetail() {
   document.getElementById('detailView').style.display = 'none';
-  document.getElementById('tab-trades').style.display = 'block';
+  document.getElementById('tab-trades').classList.add('active');
 }
 
 // ── ORDER BOOK DEPTH TAB ──────────────────────────────────────────────────────
+async function pollDepth() {
+  await Promise.all(SYMBOLS.map(async sym => {
+    const d = await fetchDepth(sym);
+    if (d) state[sym].depth = d;
+  }));
+  renderDepth();
+}
+
 function renderDepth() {
   const container = document.getElementById('depthCards');
   let html = '';
@@ -885,30 +886,39 @@ function renderDepth() {
     const cfg = TOKEN_CONFIG[sym];
     if (!st.lastPrice) return;
 
-    const price = st.lastPrice;
-    const tick  = st.tick;
+    const price    = st.lastPrice;
+    const tick     = st.tick;
+    const depth    = st.depth;
+    const hasLive  = depth && Array.isArray(depth.asks) && depth.asks.length && Array.isArray(depth.bids) && depth.bids.length;
+    const maxDepth = cfg.notional * 3;
 
-    // Show 5 tick levels above and below
     let bidsHtml = '';
     let asksHtml = '';
-    const maxDepth = cfg.notional * 3; // visual scale
 
-    for (let i = 1; i <= 5; i++) {
-      const askP = +(price + i * tick).toFixed(6);
-      const bidP = +(price - i * tick).toFixed(6);
-      // Simulated depth — will replace with real API data when proxy supports it
-      const askDepth = cfg.notional * (1.5 - i * 0.2) * (0.8 + Math.random() * 0.4);
-      const bidDepth = cfg.notional * (1.5 - i * 0.2) * (0.8 + Math.random() * 0.4);
-      const askPct   = Math.min(100, askDepth / maxDepth * 100);
-      const bidPct   = Math.min(100, bidDepth / maxDepth * 100);
+    for (let i = 0; i < 5; i++) {
+      let askP, bidP, askDepth, bidDepth;
 
+      if (hasLive) {
+        askP     = depth.asks[i] ? parseFloat(depth.asks[i][0]) : +(price + (i+1)*tick).toFixed(6);
+        bidP     = depth.bids[i] ? parseFloat(depth.bids[i][0]) : +(price - (i+1)*tick).toFixed(6);
+        askDepth = depth.asks[i] ? parseFloat(depth.asks[i][1]) * cfg.contractSize * askP : 0;
+        bidDepth = depth.bids[i] ? parseFloat(depth.bids[i][1]) * cfg.contractSize * bidP : 0;
+      } else {
+        askP     = +(price + (i+1)*tick).toFixed(6);
+        bidP     = +(price - (i+1)*tick).toFixed(6);
+        askDepth = cfg.notional * (1.5 - i * 0.2) * 0.9;
+        bidDepth = cfg.notional * (1.5 - i * 0.2) * 0.9;
+      }
+
+      const askPct  = Math.min(100, askDepth / maxDepth * 100);
+      const bidPct  = Math.min(100, bidDepth / maxDepth * 100);
       const fillCls = askDepth >= cfg.notional ? 'fill-ok' : askDepth >= cfg.notional * 0.5 ? 'fill-warn' : 'fill-bad';
 
       asksHtml += '<div class="depth-row">' +
         '<span class="depth-price red">'+fmtPrice(askP,tick)+'</span>' +
         '<div class="depth-bar-wrap"><div class="depth-bar" style="width:'+askPct+'%;background:rgba(255,61,61,0.5)"></div></div>' +
         '<span class="depth-size">'+fmtK(askDepth)+'</span>' +
-        (i===1?'<span class="depth-fill-indicator '+fillCls+'">'+(askDepth>=cfg.notional?'FULL':'PART')+'</span>':'') +
+        (i===0?'<span class="depth-fill-indicator '+fillCls+'">'+(askDepth>=cfg.notional?'FULL':'PART')+'</span>':'') +
         '</div>';
 
       bidsHtml = '<div class="depth-row">' +
@@ -917,6 +927,10 @@ function renderDepth() {
         '<span class="depth-size">'+fmtK(bidDepth)+'</span>' +
         '</div>' + bidsHtml;
     }
+
+    const sourceNote = hasLive
+      ? '<div style="margin-top:8px;padding:6px;background:var(--bg);border-radius:4px;font-size:9px;color:var(--green)">● Live MEXC depth · contract size '+cfg.contractSize+' tokens/lot</div>'
+      : '<div style="margin-top:8px;padding:6px;background:var(--bg);border-radius:4px;font-size:9px;color:var(--muted)">⚠ Depth data estimated — /proxy/mexc/depth not yet available</div>';
 
     html += '<div class="detail-card" style="margin-bottom:10px">' +
       '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">' +
@@ -928,7 +942,7 @@ function renderDepth() {
       '<div style="text-align:center;padding:4px 0;font-size:10px;font-weight:700;color:var(--yellow);border-top:1px solid var(--border);border-bottom:1px solid var(--border);margin:4px 0">'+fmtPrice(price,tick)+' MID</div>' +
       '<div class="depth-title"><span>BIDS (buy wall)</span><span style="color:var(--green)">↓ support</span></div>' +
       bidsHtml +
-      '<div style="margin-top:8px;padding:6px;background:var(--bg);border-radius:4px;font-size:9px;color:var(--muted)">⚠ Depth data is estimated. Add /proxy/mexc/depth route to server.js for live data.</div>' +
+      sourceNote +
       '</div>';
   });
   container.innerHTML = html || '<div style="color:var(--muted);padding:20px;text-align:center">No data yet</div>';
@@ -971,12 +985,11 @@ function clearAllTrades() {
 
 // ── MAIN POLL ─────────────────────────────────────────────────────────────────
 async function poll() {
-  for (const sym of SYMBOLS) {
+  await Promise.all(SYMBOLS.map(async sym => {
     await processSym(sym);
     renderTicker(sym);
-  }
+  }));
   renderCombined();
-  // Update trade log tab if visible
   if (document.getElementById('tab-trades').classList.contains('active')) renderFullLog();
 }
 
@@ -992,7 +1005,8 @@ renderClock();
 renderSession();
 poll();
 setInterval(poll, POLL_MS);
-setInterval(renderDepth, DEPTH_POLL);
+pollDepth();
+setInterval(pollDepth, DEPTH_POLL);
 </script>
 </body>
 </html>
