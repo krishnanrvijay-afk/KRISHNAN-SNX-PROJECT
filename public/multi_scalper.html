@@ -565,7 +565,8 @@ async function processSym(sym) {
     if (st.openLong) {
       const wasFilled = recentLow <= st.openLong.entry;
       if (wasFilled) {
-        st.openLong.fillConfirmed = true;
+        st.openLong.fillConfirmed   = true;
+        st.openLong.candleLowAtFill = recentLow;  // record the candle that actually touched entry
         if (recentHigh >= st.openLong.target) {
           closeTrade(sym, st.openLong.target, 'TP', recentHigh);
           st.action = 'SAME_TRADE';
@@ -579,7 +580,7 @@ async function processSym(sym) {
         }
       }
     } else if (last.close >= st.oscLower && !inBlackout()) {
-      st.action = 'ARMED';
+      if (st.action !== 'SAME_TRADE') st.action = 'ARMED';  // preserve SAME_TRADE for deferred re-entries
       openTrade(sym, st.oscLower, st.oscUpper, st.oscLower - 2 * st.tick, last.close, last);
     }
 
@@ -698,7 +699,7 @@ function renderTicker(sym) {
     const ttcls = t.tradeType === 'REPEAT' ? 'type-repeat' : 'type-new';
     return '<div class="bp-trade-row" onclick="openDetail(\'' + t.id + '\')">'+
       '<span class="bp-trade-type '+ttcls+'">'+(t.tradeType||'NEW')+'</span>' +
-      '<span class="bp-trade-price">@'+fmtPrice(t.detectionPrice||t.entry,st.tick)+'</span>' +
+      '<span class="bp-trade-price">E:'+fmtPrice(t.entry,st.tick)+'</span>' +
       '<span class="bp-trade-pnl '+cls+'">'+fmtPnl(t.net||0)+'</span>' +
       '<span class="bp-trade-time">'+t.timeOpen+'</span>' +
       '<span class="bp-trade-arrow">›</span>' +
