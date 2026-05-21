@@ -139,7 +139,7 @@ const TICK_WINDOW = 5;
 const BLACKOUT_H  = [9, 10];
 
 function todayStartEST() {
-  const now = new Date(Date.now() - 5 * 3600000);
+  const now = new Date(Date.now() - getEasternOffset() * 3600000);
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).getTime() + 5 * 3600000;
 }
 
@@ -157,7 +157,15 @@ SYMBOLS.forEach(s => {
   };
 });
 
-function nowEST() { return new Date(Date.now() - 5 * 3600000); }
+function getEasternOffset() {
+  // Use EDT (UTC-4) Mar-Nov, EST (UTC-5) Nov-Mar
+  const now = new Date();
+  const jan = new Date(now.getFullYear(), 0, 1);
+  const jul = new Date(now.getFullYear(), 6, 1);
+  const stdOffset = Math.max(jan.getTimezoneOffset(), jul.getTimezoneOffset());
+  return now.getTimezoneOffset() < stdOffset ? 4 : 5;
+}
+function nowEST() { return new Date(Date.now() - getEasternOffset() * 3600000); }
 function estHour() { return nowEST().getUTCHours(); }
 function fmtTime(ms) { return new Date(ms - 5*3600000).toISOString().slice(11,16); }
 function inBlackout() { return BLACKOUT_H.includes(estHour()); }
@@ -223,7 +231,6 @@ function getSetup(price, tick) {
 }
 
 function enterTrade(sym, upper, lower, ts) {
-  if (inBlackout()) return;
   const st = state[sym];
   st.openLong = { entry: lower, target: upper, ts };
 }
@@ -276,11 +283,14 @@ async function processSym(sym) {
 
   } else if (osc && st.inOsc) {
     if (st.openLong) {
-      if (last.high >= st.openLong.target) {
+      // Check TP and SL across recent candles high/low
+      const recentHigh = Math.max(...raw.slice(-3).map(c => c.high));
+      const recentLow  = Math.min(...raw.slice(-3).map(c => c.low));
+      if (recentHigh >= st.openLong.target) {
         closeTrade(sym, st.openLong.target, 'TP');
         st.action = 'SAME_TRADE';
         enterTrade(sym, st.oscUpper, st.oscLower, last.ts);
-      } else if (last.low <= st.oscLower - 2 * st.tick) {
+      } else if (recentLow <= st.oscLower - 2 * st.tick) {
         closeTrade(sym, st.oscLower - 2 * st.tick, 'SL');
         st.action = 'NO_TRADE';
       }
