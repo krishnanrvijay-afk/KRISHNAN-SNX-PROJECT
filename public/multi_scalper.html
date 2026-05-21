@@ -114,7 +114,10 @@
 
 <div class="tickers" id="tickerCards"></div>
 
-<div class="footer">SNX · FIL · NEAR · 5m · Binance futures · $1,400 margin · 100x · $140,000 notional · 0.02% taker · paper mode</div>
+<div class="footer" style="display:flex;justify-content:space-between;align-items:center">
+  <span>SNX · FIL · NEAR · 5m · Binance · $1,400 · 100x · $140k notional · paper mode</span>
+  <button onclick="clearAllTrades()" style="background:rgba(255,68,68,0.15);border:1px solid rgba(255,68,68,0.3);color:#ff4444;padding:4px 12px;border-radius:4px;font-family:inherit;font-size:10px;cursor:pointer;font-weight:700">CLEAR TRADES</button>
+</div>
 
 <script>
 const SYMBOLS   = ['SNXUSDT', 'FILUSDT', 'NEARUSDT'];
@@ -126,13 +129,20 @@ const TICK_WINDOW = 5;
 const BLACKOUT_H  = [9, 10];
 
 const state = {};
+// Start of current EST day in ms
+function todayStartEST() {
+  const now = new Date(Date.now() - 5 * 3600000);
+  const y = now.getUTCFullYear(), mo = now.getUTCMonth(), d = now.getUTCDate();
+  return new Date(Date.UTC(y, mo, d)).getTime() + 5 * 3600000;
+}
+
 SYMBOLS.forEach(s => {
   state[s] = {
     candles: [], tick: 0.0001,
     inOsc: false, oscUpper: 0, oscLower: 0, oscStart: 0, oscCount: 0,
     openLong: null, openShort: null,
     trades: JSON.parse(localStorage.getItem('mt_trades_' + s) || '[]'),
-    sessionStart: Date.now(),
+    sessionStart: todayStartEST(),
     dayRange: 0, lastPrice: 0
   };
 });
@@ -390,6 +400,19 @@ async function poll() {
     renderTicker(sym);
   }
   renderCombined();
+}
+
+function clearAllTrades() {
+  if (!confirm('Clear all paper trades?')) return;
+  SYMBOLS.forEach(s => {
+    state[s].trades = [];
+    state[s].oscCount = 0;
+    state[s].openLong = null;
+    state[s].openShort = null;
+    state[s].inOsc = false;
+    localStorage.removeItem('mt_trades_' + s);
+  });
+  poll();
 }
 
 buildCards();
