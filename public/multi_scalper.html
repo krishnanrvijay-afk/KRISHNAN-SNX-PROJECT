@@ -620,27 +620,29 @@ async function processSym(sym) {
     }
 
   } else if (osc && st.inOsc) {
-    // Part A: Band tightening — if the current 10-candle window has produced a
-    // strictly narrower band (by at least half a tick) and the trade has not yet
-    // been filled, update the armed levels to the tighter band so we capture
-    // the repeat scalps that form inside the original wider consolidation.
-    const newWidth = osc.upper - osc.lower;
-    const curWidth = st.oscUpper - st.oscLower;
-    if (newWidth < curWidth - st.tick * 0.5 && (!st.openLong || !st.openLong.fillConfirmed)) {
-      st.oscUpper = osc.upper;
-      st.oscLower = osc.lower;
+    // Compute actual recent activity first — this is where price IS bouncing right now.
+    // Using last 3 candles instead of detectOsc's 10-candle extreme window, which stays
+    // wide until old extreme candles age out (~9 more polls after tightening begins).
+    const recentHigh  = Math.max(...raw.slice(-3).map(c => c.high));
+    const recentLow   = Math.min(...raw.slice(-3).map(c => c.low));
+    const recentWidth = recentHigh - recentLow;
+    const curWidth    = st.oscUpper - st.oscLower;
+
+    // Part A: Band tightening — if the last 3 candles are oscillating in a range
+    // tighter than the armed band by at least half a tick, and the fill has not yet
+    // confirmed, adapt entry/TP/SL to the tighter activity band so 1-tick scalps fire.
+    if (recentWidth < curWidth - st.tick * 0.5 && (!st.openLong || !st.openLong.fillConfirmed)) {
+      st.oscUpper = recentHigh;
+      st.oscLower = recentLow;
       if (st.openLong) {
-        st.openLong.entry     = osc.lower;
-        st.openLong.target    = osc.upper;
-        st.openLong.sl        = osc.lower - 2 * st.tick;
-        st.openLong.bandLower = osc.lower;
-        st.openLong.bandUpper = osc.upper;
-        st.openLong.bandTicks = Math.round((osc.upper - osc.lower) / st.tick);
+        st.openLong.entry     = recentLow;
+        st.openLong.target    = recentHigh;
+        st.openLong.sl        = recentLow - 2 * st.tick;
+        st.openLong.bandLower = recentLow;
+        st.openLong.bandUpper = recentHigh;
+        st.openLong.bandTicks = Math.round(recentWidth / st.tick);
       }
     }
-
-    const recentHigh = Math.max(...raw.slice(-3).map(c => c.high));
-    const recentLow  = Math.min(...raw.slice(-3).map(c => c.low));
 
     if (st.openLong) {
       const wasFilled = recentLow <= st.openLong.entry;
