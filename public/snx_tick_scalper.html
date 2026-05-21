@@ -517,9 +517,9 @@ function inferTick(c) {
 
 // ── SETUP LEVELS ──────────────────────────────────────────────────────────────
 function calcSetup(price) {
-  const entry = +(price - tick).toFixed(6);
-  const tp    = +(entry + TP_TICKS * tick).toFixed(6);
-  const sl    = +(entry - SL_TICKS * tick).toFixed(6);
+  const entry = +(price - tick).toFixed(6);      // 1 tick below current
+  const tp    = +(price).toFixed(6);             // TP = current price (1 tick above entry)
+  const sl    = +(entry - SL_TICKS * tick).toFixed(6);  // SL = 2 ticks below entry
   return { entry, tp, sl };
 }
 
