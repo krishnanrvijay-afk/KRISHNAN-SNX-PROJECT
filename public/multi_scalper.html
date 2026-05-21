@@ -413,7 +413,7 @@ async function fetchCandles(symbol, limit) {
   try {
     const r = await fetch('/proxy/mexc/kline?symbol=' + symbol + '&interval=' + CANDLE_INT + '&limit=' + limit);
     const d = await r.json();
-    if (!d?.success || !d.data?.time?.length) return [];
+    if (!d || !d.success || !d.data || !d.data.time || !d.data.time.length) return [];
     const raw = d.data;
     return raw.time.map((t,i) => ({
       ts:    t * 1000,
@@ -430,7 +430,7 @@ async function fetchDepth(symbol) {
   try {
     const r = await fetch('/proxy/mexc/depth?symbol=' + symbol + '&limit=10');
     const d = await r.json();
-    if (!d?.success || !d.data) return null;
+    if (!d || !d.success || !d.data) return null;
     return d.data;
   } catch(e) { return null; }
 }
@@ -801,7 +801,7 @@ function renderFullLog() {
       '<div style="flex:1;margin:0 8px">' +
         '<div style="font-size:11px;font-weight:600">'+cfg.label+' · '+t.timeOpen+(t.timeClose?' → '+t.timeClose:'')+'</div>' +
         '<div style="font-size:10px;color:var(--muted);margin-top:2px">' +
-          'E:'+fmtPrice(t.entry,state[t.sym]?.tick||0.0001)+' TP:'+fmtPrice(t.target,state[t.sym]?.tick||0.0001)+' · '+
+          'E:'+fmtPrice(t.entry,(state[t.sym] ? state[t.sym].tick : 0.0001)||0.0001)+' TP:'+fmtPrice(t.target,(state[t.sym] ? state[t.sym].tick : 0.0001)||0.0001)+' · '+
           (t.exitReason||'OPEN')+(t.holdMinutes?' · '+t.holdMinutes+'m':'') +
         '</div>' +
       '</div>' +
@@ -819,7 +819,7 @@ function openDetail(tradeId) {
   const t = allTrades.find(x => x.id === tradeId);
   if (!t) return;
   const cfg  = TOKEN_CONFIG[t.sym];
-  const tick = state[t.sym]?.tick || 0.0001;
+  const tick = (state[t.sym] ? state[t.sym].tick : 0.0001) || 0.0001;
   const cls  = (t.net||0) >= 0 ? 'green' : 'red';
 
   const fillCheck = t.fillConfirmed
