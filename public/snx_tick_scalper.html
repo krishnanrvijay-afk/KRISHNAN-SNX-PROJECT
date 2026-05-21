@@ -520,7 +520,7 @@ function inferTick(c) {
 // TP    = zone + 1 tick  (1 above zone)
 // ENTRY = zone - 1 tick  (1 below zone — where limit buy sits)
 // SL    = zone - 3 ticks (2 below entry)
-function getTP()    { return +(zonePrice + tick).toFixed(6); }
+function getTP()    { return +(zonePrice).toFixed(6); }
 function getEntry() { return +(zonePrice - tick).toFixed(6); }
 function getSL()    { return +(zonePrice - 3 * tick).toFixed(6); }
 function projWin()  { return NOTIONAL * tick / zonePrice; }
