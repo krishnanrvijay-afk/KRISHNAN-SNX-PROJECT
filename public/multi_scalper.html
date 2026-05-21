@@ -222,7 +222,8 @@
     padding: 8px 14px;
     font-family: 'JetBrains Mono', monospace;
     font-size: 10px;
-    color: #4a6272;
+    font-weight: 700;
+    color: #ddeeff;
     border-bottom: 1px dashed #222;
     display: flex;
     justify-content: space-between;
@@ -415,6 +416,7 @@ SYMBOLS.forEach(s => {
     candles: [], tick: 0.0001,
     inOsc: false, oscUpper: 0, oscLower: 0, oscCount: 0,
     prevOscUpper: 0, prevOscLower: 0,
+    initialOscWidth: 0,
     openLong: null, action: 'WAIT',
     trades: JSON.parse(localStorage.getItem('v3_' + s) || '[]'),
     sessionStart: todayStartEDT(),
@@ -604,13 +606,14 @@ async function processSym(sym) {
 
   if (osc && !st.inOsc) {
     const isNew = st.prevOscLower !== osc.lower || st.prevOscUpper !== osc.upper;
-    st.inOsc        = true;
-    st.prevOscLower = st.oscLower;
-    st.prevOscUpper = st.oscUpper;
-    st.oscUpper     = osc.upper;
-    st.oscLower     = osc.lower;
+    st.inOsc          = true;
+    st.prevOscLower   = st.oscLower;
+    st.prevOscUpper   = st.oscUpper;
+    st.oscUpper       = osc.upper;
+    st.oscLower       = osc.lower;
+    st.initialOscWidth = osc.upper - osc.lower;
     st.oscCount++;
-    st.action       = isNew && st.prevOscLower > 0 ? 'NEW_SETUP' : 'ARMED';
+    st.action         = isNew && st.prevOscLower > 0 ? 'NEW_SETUP' : 'ARMED';
     // Arm trade only if price at or above entry level and not in blackout
     if (last.close >= st.oscLower && !inBlackout()) {
       openTrade(sym, st.oscLower, st.oscUpper, st.oscLower - 2 * st.tick, last.close, last);
@@ -768,6 +771,7 @@ function renderTicker(sym) {
   const projNet = isArmed ? (cfg.notional * (tpP - entryP) / entryP - MAKER_FEE * cfg.notional) : 0;
 
   // Action strip values
+  const watchColor = st.dayRange < 4 ? '#00e676' : st.dayRange < 7 ? '#ffd740' : '#ff3d3d';
   let actionLabel = '', actionColor = '#4a6272', actionE = '--', actionTP = '--';
   if (isBlackout) {
     actionLabel = 'BLACKOUT — NO TRADE'; actionColor = '#ff3d3d';
@@ -781,17 +785,18 @@ function renderTicker(sym) {
     actionLabel = 'ARMED'; actionColor = '#ffd740';
     actionE = fmtPrice(st.oscLower,st.tick); actionTP = fmtPrice(st.oscUpper,st.tick);
   } else {
-    actionLabel = 'NO TRADE — WATCHING'; actionColor = '#333';
+    actionLabel = 'NO TRADE — WATCHING'; actionColor = watchColor;
   }
 
   const card = document.getElementById('card_'+sym);
   if (!card) return;
-  const borderCls = isBlackout                          ? 'border-wait'  :
+  const borderCls = isBlackout                             ? 'border-wait'  :
                     st.action === 'SAME_TRADE' && st.inOsc ? 'border-same'  :
                     st.action === 'NEW_SETUP'  && st.inOsc ? 'border-new'   :
                     st.action === 'ARMED'      && st.inOsc ? 'border-armed' :
-                    'border-wait';
+                    '';
   card.className = 'ticker-card ' + borderCls;
+  card.style.borderColor = borderCls ? '' : watchColor;
   card.innerHTML =
     // ── TOP: Token name + status badges
     '<div class="bp-header">' +
@@ -824,12 +829,24 @@ function renderTicker(sym) {
     '</div>' +
 
     // ── ACTION STRIP
-    '<div class="bp-action" style="border-left:4px solid '+actionColor+'">' +
-      '<div class="bp-action-label" style="color:'+actionColor+'">'+actionLabel+'</div>' +
-      '<div class="bp-action-detail" style="color:'+actionColor+'">' +
-        (actionE!=='--' ? 'E: '+actionE+'<br>TP: '+actionTP : '') +
-      '</div>' +
-    '</div>' +
+    (function(){
+      const tightened = st.inOsc && st.initialOscWidth > 0 &&
+        (st.initialOscWidth - (st.oscUpper - st.oscLower)) > st.tick * 0.5;
+      const tightenMsg = tightened
+        ? '<div style="margin-top:5px;font-size:11px;font-weight:700;color:#ff9800;font-family:\'JetBrains Mono\',monospace;letter-spacing:0.5px">' +
+          '⬇ BAND TIGHTENED · ' + fmtPrice(st.oscLower,st.tick) + ' – ' + fmtPrice(st.oscUpper,st.tick) +
+          ' (' + Math.round((st.oscUpper - st.oscLower) / st.tick) + 'tk vs ' + Math.round(st.initialOscWidth / st.tick) + 'tk initial)</div>'
+        : '';
+      return '<div class="bp-action" style="border-left:4px solid '+actionColor+'">' +
+        '<div>' +
+          '<div class="bp-action-label" style="color:'+actionColor+'">'+actionLabel+'</div>' +
+          tightenMsg +
+        '</div>' +
+        '<div class="bp-action-detail" style="color:'+actionColor+'">' +
+          (actionE!=='--' ? 'E: '+actionE+'<br>TP: '+actionTP : '') +
+        '</div>' +
+      '</div>';
+    })() +
 
     // ── ORDER SETUP: Entry | TP | SL
     '<div class="bp-order">' +
