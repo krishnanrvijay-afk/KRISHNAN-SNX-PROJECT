@@ -14,164 +14,145 @@
     --green:   #00e676;
     --yellow:  #ffd740;
     --red:     #ff4444;
-    --blue:    #29b6f6;
-    --muted:   #556b7a;
-    --text:    #cdd8e0;
+    --blue:    #00d4ff;
+    --muted:   #6a8898;
+    --text:    #e0eef8;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--bg); color: var(--text); font-family: 'JetBrains Mono', monospace; font-size: 12px; padding: 10px; }
+  body { background: var(--bg); color: var(--text); font-family: 'JetBrains Mono', monospace; font-size: 13px; padding: 10px; }
 
   .hdr { display: flex; justify-content: space-between; align-items: center; padding-bottom: 10px; border-bottom: 1px solid var(--border); margin-bottom: 10px; }
-  .hdr-title { font-family: 'Syne', sans-serif; font-size: 20px; font-weight: 800; color: #fff; }
+  .hdr-title { font-family: 'Syne', sans-serif; font-size: 22px; font-weight: 800; color: #fff; letter-spacing: 1px; }
   .hdr-title span { color: var(--green); }
-  .hdr-right { text-align: right; font-size: 11px; color: var(--muted); }
-  .live-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--green); margin-right: 5px; animation: pulse 1.8s ease-in-out infinite; }
-  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+  .hdr-right { text-align: right; }
+  .hdr-clock { font-size: 13px; font-weight: 700; color: var(--yellow); }
+  .hdr-session { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .live-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--green); margin-right: 5px; animation: pulse 1.8s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.2} }
 
-  /* Session bar */
   .session-bar { display: flex; gap: 3px; margin-bottom: 10px; }
-  .session-seg { flex: 1; height: 24px; border-radius: 3px; display: flex; align-items: center; justify-content: center; font-size: 8px; font-weight: 600; text-transform: uppercase; }
+  .session-seg { flex: 1; height: 26px; border-radius: 3px; display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
   .session-seg.active { outline: 2px solid var(--yellow); }
 
-  /* Blackout */
-  .blackout { background: rgba(255,68,68,0.1); border: 1px solid rgba(255,68,68,0.3); border-radius: 5px; padding: 8px; margin-bottom: 10px; color: var(--red); font-size: 11px; font-weight: 600; text-align: center; display: none; }
+  .blackout { background: rgba(255,68,68,0.1); border: 1px solid rgba(255,68,68,0.3); border-radius: 5px; padding: 8px; margin-bottom: 10px; color: var(--red); font-size: 12px; font-weight: 700; text-align: center; display: none; }
 
-  /* Combined P&L bar */
-  .combined { display: grid; grid-template-columns: repeat(4,1fr); gap: 8px; margin-bottom: 10px; }
-  .cpill { background: var(--surface); border: 1px solid var(--border); border-radius: 5px; padding: 10px; text-align: center; }
-  .cpill-label { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
-  .cpill-value { font-size: 16px; font-weight: 700; margin-top: 3px; }
+  .combined { display: grid; grid-template-columns: repeat(4,1fr); gap: 8px; margin-bottom: 12px; }
+  .cpill { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 12px; text-align: center; }
+  .cpill-label { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+  .cpill-value { font-size: 18px; font-weight: 700; }
 
-  /* Ticker columns */
   .tickers { display: flex; flex-direction: column; gap: 10px; }
-  .ticker-card { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 12px; }
+  .ticker-card { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 14px; transition: border-color 0.3s; }
   .ticker-card.osc-active { border-color: var(--green); }
   .ticker-card.sig-yellow { border-color: var(--yellow); }
   .ticker-card.sig-red    { border-color: var(--red); }
 
-  .ticker-hdr { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-  .ticker-name { font-family: 'Syne', sans-serif; font-size: 16px; font-weight: 800; color: #fff; }
-  .ticker-badge { font-size: 10px; padding: 2px 8px; border-radius: 20px; font-weight: 600; }
+  .ticker-hdr { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .ticker-name { font-family: 'Syne', sans-serif; font-size: 20px; font-weight: 800; color: #fff; letter-spacing: 1px; }
+  .badge-row { display: flex; gap: 6px; align-items: center; }
+  .ticker-badge { font-size: 10px; padding: 3px 9px; border-radius: 20px; font-weight: 700; }
   .badge-green  { background: rgba(0,230,118,0.15); color: var(--green); border: 1px solid rgba(0,230,118,0.3); }
   .badge-yellow { background: rgba(255,215,64,0.15); color: var(--yellow); border: 1px solid rgba(255,215,64,0.3); }
   .badge-red    { background: rgba(255,68,68,0.15); color: var(--red); border: 1px solid rgba(255,68,68,0.3); }
-  .badge-flat   { background: rgba(85,107,122,0.15); color: var(--muted); border: 1px solid var(--border); }
+  .badge-flat   { background: rgba(106,136,152,0.15); color: var(--muted); border: 1px solid var(--border); }
+  .badge-osc    { background: rgba(0,230,118,0.2); color: var(--green); border: 1px solid rgba(0,230,118,0.4); animation: pulse 1.5s ease-in-out infinite; }
 
-  .ticker-stats { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 6px; margin-bottom: 10px; }
-  .tstat { }
-  .tstat-label { font-size: 9px; color: var(--muted); text-transform: uppercase; }
-  .tstat-value { font-size: 13px; font-weight: 700; margin-top: 2px; }
+  .ticker-stats { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+  .tstat-label { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 3px; }
+  .tstat-value { font-size: 18px; font-weight: 700; }
 
-  /* Band visual */
-  .band-wrap { position: relative; height: 40px; background: var(--bg); border-radius: 3px; border: 1px solid var(--border); overflow: hidden; margin-bottom: 8px; }
+  .band-wrap { position: relative; height: 44px; background: var(--bg); border-radius: 4px; border: 1px solid var(--border); overflow: hidden; margin-bottom: 10px; }
   .band-fill { position: absolute; left: 0; right: 0; transition: all 0.4s ease; }
-  .band-fill.active { background: rgba(0,230,118,0.1); border-top: 1px solid rgba(0,230,118,0.5); border-bottom: 1px solid rgba(0,230,118,0.5); }
+  .band-fill.active { background: rgba(0,230,118,0.08); border-top: 1px solid rgba(0,230,118,0.5); border-bottom: 1px solid rgba(0,230,118,0.5); }
   .band-line { position: absolute; left: 0; right: 0; height: 2px; background: var(--yellow); transition: top 0.3s; }
-  .band-lbl-u { position: absolute; right: 6px; top: 2px; font-size: 9px; color: var(--green); }
-  .band-lbl-l { position: absolute; right: 6px; bottom: 2px; font-size: 9px; color: var(--red); }
-  .band-lbl-p { position: absolute; left: 6px; font-size: 9px; color: var(--yellow); transform: translateY(-50%); transition: top 0.3s; }
+  .band-lbl-u { position: absolute; right: 8px; top: 3px; font-size: 10px; font-weight: 700; color: var(--green); }
+  .band-lbl-l { position: absolute; right: 8px; bottom: 3px; font-size: 10px; font-weight: 700; color: var(--red); }
+  .band-lbl-p { position: absolute; left: 8px; font-size: 10px; font-weight: 700; color: var(--yellow); transform: translateY(-50%); transition: top 0.3s; }
 
-  /* Osc stats row */
-  .osc-row { display: flex; gap: 12px; font-size: 10px; }
-  .osc-item { flex: 1; }
-  .osc-item-label { color: var(--muted); }
-  .osc-item-value { font-weight: 600; margin-top: 1px; }
+  .osc-row { display: grid; grid-template-columns: repeat(4,1fr); gap: 6px; font-size: 11px; margin-bottom: 10px; }
+  .osc-item-label { color: var(--muted); font-size: 9px; text-transform: uppercase; }
+  .osc-item-value { font-weight: 700; font-size: 13px; margin-top: 2px; }
 
-  /* Trade log */
-  .trade-log { margin-top: 8px; }
-  .trade-row { display: flex; align-items: center; gap: 6px; padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 10px; }
+  .trade-log { border-top: 1px solid var(--border); padding-top: 8px; }
+  .trade-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--border); font-size: 11px; }
   .trade-row:last-child { border-bottom: none; }
-  .trade-side { font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 2px; }
+  .trade-side { font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 2px; min-width: 32px; text-align: center; }
   .trade-side.long  { background: rgba(0,230,118,0.15); color: var(--green); }
   .trade-side.short { background: rgba(255,68,68,0.15); color: var(--red); }
-  .trade-pnl { font-weight: 600; margin-left: auto; }
-  .trade-time { color: var(--muted); font-size: 9px; }
+  .trade-prices { color: var(--muted); flex: 1; }
+  .trade-pnl { font-weight: 700; min-width: 80px; text-align: right; }
+  .trade-time { color: var(--muted); font-size: 10px; min-width: 38px; text-align: right; }
 
-  .green { color: var(--green) !important; }
+  .green  { color: var(--green) !important; }
   .yellow { color: var(--yellow) !important; }
-  .red { color: var(--red) !important; }
-  .blue { color: var(--blue) !important; }
+  .red    { color: var(--red) !important; }
+  .blue   { color: var(--blue) !important; }
+  .white  { color: #fff !important; }
 
-  .footer { color: var(--muted); font-size: 9px; text-align: center; padding-top: 8px; border-top: 1px solid var(--border); margin-top: 10px; }
+  .footer { color: var(--muted); font-size: 10px; text-align: center; padding-top: 10px; border-top: 1px solid var(--border); margin-top: 10px; }
 </style>
 </head>
 <body>
 
 <div class="hdr">
   <div class="hdr-title">MULTI<span>.</span>SCALPER</div>
-  <div class="hdr-right"><span class="live-dot"></span><span id="clock">--:--:-- EST</span><br><span id="sessionLabel">--</span></div>
+  <div class="hdr-right">
+    <div class="hdr-clock"><span class="live-dot"></span><span id="clock">--:--:-- EST</span></div>
+    <div class="hdr-session" id="sessionLabel">--</div>
+  </div>
 </div>
 
 <div class="session-bar" id="sessionBar"></div>
-<div class="blackout" id="blackoutBanner">⛔ NY OPEN BLACKOUT 09:00–11:00 EST</div>
+<div class="blackout" id="blackoutBanner">⛔ NY OPEN BLACKOUT — 09:00–11:00 EST — NO TRADES</div>
 
-<!-- Combined P&L -->
 <div class="combined">
-  <div class="cpill"><div class="cpill-label">Total P&L</div><div class="cpill-value" id="totalPnl">$0</div></div>
+  <div class="cpill"><div class="cpill-label">Total P&L</div><div class="cpill-value" id="totalPnl">+$0.00</div></div>
   <div class="cpill"><div class="cpill-label">Win Rate</div><div class="cpill-value" id="totalWr">--</div></div>
   <div class="cpill"><div class="cpill-label">Trades</div><div class="cpill-value" id="totalTrades">0</div></div>
   <div class="cpill"><div class="cpill-label">OSC Windows</div><div class="cpill-value" id="totalOsc">0</div></div>
 </div>
 
-<!-- Ticker cards -->
 <div class="tickers" id="tickerCards"></div>
 
-<div class="footer">SNX · FIL · NEAR · 5m · $1,400 margin · 100x · $140,000 notional · 0.02% taker · paper mode</div>
+<div class="footer">SNX · FIL · NEAR · 5m · Binance futures · $1,400 margin · 100x · $140,000 notional · 0.02% taker · paper mode</div>
 
 <script>
-// ── CONFIG ────────────────────────────────────────────────────────────────────
-const SYMBOLS    = ['SNXUSDT', 'FILUSDT', 'NEARUSDT'];
-const NOTIONAL   = 140000;
-const TAKER_FEE  = 0.0002;
-const POLL_MS    = 15000;
-const MIN_CANDLES = 3;   // loosened from 5
-const TICK_WINDOW = 5;   // loosened from 3 ticks
-const BLACKOUT_H = [9, 10];
+const SYMBOLS   = ['SNXUSDT', 'FILUSDT', 'NEARUSDT'];
+const NOTIONAL  = 140000;
+const TAKER_FEE = 0.0002;
+const POLL_MS   = 15000;
+const MIN_CANDLES = 3;
+const TICK_WINDOW = 5;
+const BLACKOUT_H  = [9, 10];
 
-// Per-symbol state
 const state = {};
 SYMBOLS.forEach(s => {
   state[s] = {
-    candles:    [],
-    tick:       0.0001,
-    inOsc:      false,
-    oscUpper:   0,
-    oscLower:   0,
-    oscStart:   0,
-    oscCount:   0,
-    openLong:   null,
-    openShort:  null,
-    trades:     JSON.parse(localStorage.getItem('trades_' + s) || '[]'),
+    candles: [], tick: 0.0001,
+    inOsc: false, oscUpper: 0, oscLower: 0, oscStart: 0, oscCount: 0,
+    openLong: null, openShort: null,
+    trades: JSON.parse(localStorage.getItem('mt_trades_' + s) || '[]'),
     sessionStart: Date.now(),
-    dayRange:   0,
-    lastPrice:  0,
+    dayRange: 0, lastPrice: 0
   };
 });
 
-let alerts = [];
-
-// ── TIME ──────────────────────────────────────────────────────────────────────
 function nowEST() { return new Date(Date.now() - 5 * 3600000); }
 function estHour() { return nowEST().getUTCHours(); }
-function fmtTime(ms) {
-  const d = new Date(ms - 5 * 3600000);
-  return d.toISOString().slice(11,16);
-}
+function fmtTime(ms) { return new Date(ms - 5*3600000).toISOString().slice(11,16); }
 function inBlackout() { return BLACKOUT_H.includes(estHour()); }
 function sessionName(h) {
-  if (h < 3)  return 'Asia';
-  if (h < 9)  return 'London';
-  if (h < 11) return 'NY Open';
-  if (h < 21) return 'NY';
+  if (h < 3) return 'Asia'; if (h < 9) return 'London';
+  if (h < 11) return 'NY Open'; if (h < 21) return 'NY Session';
   return 'Late';
 }
+function fmtPnl(v) { return (v >= 0 ? '+' : '') + '$' + Math.abs(v).toFixed(2); }
 
-// ── FETCH ─────────────────────────────────────────────────────────────────────
 async function fetchCandles(symbol, limit) {
   try {
     const r = await fetch('/proxy/mexc/kline?symbol=' + symbol + '&interval=Min5&limit=' + limit);
     const d = await r.json();
-    if (!d || !d.success || !d.data) return [];
+    if (!d || !d.success || !d.data || !d.data.time.length) return [];
     const raw = d.data;
     const out = [];
     for (let i = 0; i < raw.time.length; i++) {
@@ -187,7 +168,6 @@ async function fetchCandles(symbol, limit) {
   } catch(e) { return []; }
 }
 
-// ── TICK ──────────────────────────────────────────────────────────────────────
 function inferTick(c) {
   const diffs = [];
   for (let i = 1; i < c.length; i++) {
@@ -197,7 +177,6 @@ function inferTick(c) {
   return diffs.length ? Math.min(...diffs) : 0.0001;
 }
 
-// ── DETECT OSC (loosened: 3 candles, 5 ticks) ────────────────────────────────
 function detectOsc(candles, tick) {
   if (candles.length < MIN_CANDLES) return null;
   const win = candles.slice(-MIN_CANDLES);
@@ -206,47 +185,32 @@ function detectOsc(candles, tick) {
   return (wh - wl) <= TICK_WINDOW * tick ? { upper: wh, lower: wl } : null;
 }
 
-// ── P&L ──────────────────────────────────────────────────────────────────────
 function pnlForRange(upper, lower) {
   if (!lower) return 0;
   return NOTIONAL * (upper - lower) / lower - 2 * TAKER_FEE * NOTIONAL;
 }
-function fmtPnl(v) {
-  return (v >= 0 ? '+' : '') + '$' + Math.abs(v).toFixed(2);
-}
 
-// ── ENTER TRADE ───────────────────────────────────────────────────────────────
 function enterTrade(sym, upper, lower, ts) {
   if (inBlackout()) return;
   const st = state[sym];
-  const fees = 2 * TAKER_FEE * NOTIONAL;
-  const avg  = (upper + lower) / 2;
-  const pct  = (upper - lower) / avg;
   st.openLong  = { side:'LONG',  entry:lower, target:upper, ts };
   st.openShort = { side:'SHORT', entry:upper, target:lower, ts };
 }
 
 function closeTrade(sym, exitPrice, reason) {
   const st = state[sym];
-  const now = Date.now();
   [st.openLong, st.openShort].forEach(t => {
     if (!t) return;
     const fees = 2 * TAKER_FEE * NOTIONAL;
     const net  = t.side === 'LONG'
       ? NOTIONAL * (exitPrice - t.entry) / t.entry - fees
       : NOTIONAL * (t.entry - exitPrice) / t.entry - fees;
-    st.trades.push({
-      sym, side: t.side, entry: t.entry, exit: exitPrice,
-      ts: t.ts, tsClose: now,
-      net: +net.toFixed(2),
-      outcome: net > 0 ? 'WIN' : 'LOSS', reason
-    });
+    st.trades.push({ sym, side:t.side, entry:t.entry, exit:exitPrice, ts:t.ts, tsClose:Date.now(), net:+net.toFixed(2), outcome:net>0?'WIN':'LOSS', reason });
   });
   st.openLong = st.openShort = null;
-  localStorage.setItem('trades_' + sym, JSON.stringify(st.trades));
+  localStorage.setItem('mt_trades_' + sym, JSON.stringify(st.trades));
 }
 
-// ── PROCESS SYMBOL ────────────────────────────────────────────────────────────
 async function processSym(sym) {
   const raw = await fetchCandles(sym, 30);
   if (!raw.length) return;
@@ -254,23 +218,17 @@ async function processSym(sym) {
   st.candles   = raw;
   st.tick      = inferTick(raw);
   const last   = raw[raw.length - 1];
-  const prices = raw.map(c => c.close);
   st.lastPrice = last.close;
   const dayHigh = Math.max(...raw.map(c => c.high));
   const dayLow  = Math.min(...raw.map(c => c.low));
   st.dayRange   = (dayHigh - dayLow) / dayLow * 100;
 
   const osc = detectOsc(raw, st.tick);
-
   if (osc && !st.inOsc) {
-    st.inOsc    = true;
-    st.oscUpper = osc.upper;
-    st.oscLower = osc.lower;
-    st.oscStart = last.ts;
-    st.oscCount++;
+    st.inOsc = true; st.oscUpper = osc.upper; st.oscLower = osc.lower;
+    st.oscStart = last.ts; st.oscCount++;
     enterTrade(sym, osc.upper, osc.lower, last.ts);
   } else if (osc && st.inOsc) {
-    // Check targets
     if (st.openLong  && last.close >= st.openLong.target)  closeTrade(sym, st.openLong.target,  'TARGET');
     if (st.openShort && last.close <= st.openShort.target) closeTrade(sym, st.openShort.target, 'TARGET');
   } else if (!osc && st.inOsc) {
@@ -279,7 +237,6 @@ async function processSym(sym) {
   }
 }
 
-// ── RENDER ────────────────────────────────────────────────────────────────────
 function renderClock() {
   const t = nowEST();
   const h = String(t.getUTCHours()).padStart(2,'0');
@@ -291,11 +248,11 @@ function renderClock() {
 
 function renderSession() {
   const sessions = [
-    {label:'Asia',   start:0,  end:3,  color:'#1a3a4a'},
-    {label:'London', start:3,  end:9,  color:'#1a3a2a'},
-    {label:'NYOpen', start:9,  end:11, color:'#3a1a1a'},
-    {label:'NY',     start:11, end:21, color:'#1a2a3a'},
-    {label:'Late',   start:21, end:24, color:'#1a1a3a'}
+    {label:'Asia',  start:0, end:3,  color:'#1a3a4a'},
+    {label:'London',start:3, end:9,  color:'#1a3a2a'},
+    {label:'NYOpen',start:9, end:11, color:'#3a1a1a'},
+    {label:'NY',    start:11,end:21, color:'#1a2a3a'},
+    {label:'Late',  start:21,end:24, color:'#1a1a3a'}
   ];
   const h = estHour();
   document.getElementById('sessionBar').innerHTML = sessions.map(s => {
@@ -306,19 +263,19 @@ function renderSession() {
 }
 
 function renderCombined() {
-  let totalNet = 0, totalWins = 0, totalCount = 0, totalOsc = 0;
+  let totalNet=0, totalWins=0, totalCount=0, totalOsc=0;
   SYMBOLS.forEach(sym => {
     const st = state[sym];
-    const sessionTrades = st.trades.filter(t => t.ts >= st.sessionStart);
-    totalNet   += sessionTrades.reduce((s,t) => s + t.net, 0);
-    totalWins  += sessionTrades.filter(t => t.outcome === 'WIN').length;
-    totalCount += sessionTrades.length;
+    const st2 = st.trades.filter(t => t.ts >= st.sessionStart);
+    totalNet   += st2.reduce((s,t) => s+t.net, 0);
+    totalWins  += st2.filter(t => t.outcome==='WIN').length;
+    totalCount += st2.length;
     totalOsc   += st.oscCount;
   });
   const el = document.getElementById('totalPnl');
   el.textContent = fmtPnl(totalNet);
   el.style.color = totalNet >= 0 ? 'var(--green)' : 'var(--red)';
-  document.getElementById('totalWr').textContent    = totalCount ? Math.round(totalWins/totalCount*100)+'%' : '--';
+  document.getElementById('totalWr').textContent     = totalCount ? Math.round(totalWins/totalCount*100)+'%' : '--';
   document.getElementById('totalTrades').textContent = totalCount;
   document.getElementById('totalOsc').textContent    = totalOsc;
 }
@@ -329,64 +286,57 @@ function renderTicker(sym) {
   if (!price) return;
 
   const sessionTrades = st.trades.filter(t => t.ts >= st.sessionStart);
-  const sessionNet    = sessionTrades.reduce((s,t) => s + t.net, 0);
-  const wins          = sessionTrades.filter(t => t.outcome === 'WIN').length;
+  const sessionNet    = sessionTrades.reduce((s,t) => s+t.net, 0);
+  const wins          = sessionTrades.filter(t => t.outcome==='WIN').length;
   const tot           = sessionTrades.length;
-  const wr            = tot ? Math.round(wins/tot*100) + '%' : '--';
+  const wr            = tot ? Math.round(wins/tot*100)+'%' : '--';
 
-  // Signal class
-  let sigClass = '';
-  let badgeHtml = '';
+  let sigClass='', sigBadge='';
   if (st.dayRange < 4) {
-    sigClass  = '';
-    badgeHtml = '<span class="ticker-badge badge-green">GREEN</span>';
+    sigBadge = '<span class="ticker-badge badge-green">GREEN</span>';
   } else if (st.dayRange < 7) {
-    sigClass  = 'sig-yellow';
-    badgeHtml = '<span class="ticker-badge badge-yellow">CAUTION</span>';
+    sigClass = 'sig-yellow';
+    sigBadge = '<span class="ticker-badge badge-yellow">CAUTION</span>';
   } else {
-    sigClass  = 'sig-red';
-    badgeHtml = '<span class="ticker-badge badge-red">AVOID</span>';
+    sigClass = 'sig-red';
+    sigBadge = '<span class="ticker-badge badge-red">AVOID</span>';
   }
-
   const oscBadge = st.inOsc
-    ? '<span class="ticker-badge badge-green">OSC ACTIVE</span>'
+    ? '<span class="ticker-badge badge-osc">OSC ACTIVE</span>'
     : '<span class="ticker-badge badge-flat">FLAT</span>';
 
-  // Band visual
-  const upper  = st.oscUpper || price + st.tick;
-  const lower  = st.oscLower || price - st.tick;
-  const range  = upper - lower;
-  const pad    = range * 3;
-  const total  = range + pad * 2;
+  const upper = st.oscUpper || price + st.tick * 3;
+  const lower = st.oscLower || price - st.tick * 3;
+  const range = upper - lower || st.tick;
+  const pad   = range * 3;
+  const total = range + pad * 2;
   const topPct = (1 - (upper - lower + pad) / total) * 100;
   const htPct  = range / total * 100;
   const pPct   = Math.max(2, Math.min(98, (1 - (price - (lower - pad)) / total) * 100));
 
-  // Recent trades
   const recentTrades = [...st.trades].reverse().slice(0,3).map(t => {
     const cls = t.net >= 0 ? 'green' : 'red';
     return '<div class="trade-row">' +
       '<span class="trade-side ' + t.side.toLowerCase() + '">' + t.side.slice(0,1) + '</span>' +
-      '<span style="color:var(--muted)">' + t.entry.toFixed(4) + '→' + t.exit.toFixed(4) + '</span>' +
+      '<span class="trade-prices">' + parseFloat(t.entry).toFixed(4) + ' → ' + parseFloat(t.exit).toFixed(4) + '</span>' +
       '<span class="trade-pnl ' + cls + '">' + fmtPnl(t.net) + '</span>' +
       '<span class="trade-time">' + fmtTime(t.ts) + '</span>' +
       '</div>';
-  }).join('') || '<div style="color:var(--muted);font-size:10px;padding:4px 0">Waiting for oscillation window...</div>';
+  }).join('') || '<div style="color:var(--muted);font-size:11px;padding:6px 0">Waiting for oscillation window...</div>';
 
   const card = document.getElementById('card_' + sym);
   if (!card) return;
-
   card.className = 'ticker-card ' + sigClass + (st.inOsc ? ' osc-active' : '');
   card.innerHTML =
     '<div class="ticker-hdr">' +
       '<div class="ticker-name">' + sym.replace('USDT','') + '</div>' +
-      '<div style="display:flex;gap:6px">' + badgeHtml + oscBadge + '</div>' +
+      '<div class="badge-row">' + sigBadge + oscBadge + '</div>' +
     '</div>' +
     '<div class="ticker-stats">' +
-      '<div class="tstat"><div class="tstat-label">Price</div><div class="tstat-value blue">' + price.toFixed(4) + '</div></div>' +
-      '<div class="tstat"><div class="tstat-label">Range</div><div class="tstat-value ' + (st.dayRange<4?'green':st.dayRange<7?'yellow':'red') + '">' + st.dayRange.toFixed(1) + '%</div></div>' +
-      '<div class="tstat"><div class="tstat-label">P&L</div><div class="tstat-value ' + (sessionNet>=0?'green':'red') + '">' + fmtPnl(sessionNet) + '</div></div>' +
-      '<div class="tstat"><div class="tstat-label">Win%</div><div class="tstat-value">' + wr + '</div></div>' +
+      '<div><div class="tstat-label">Price</div><div class="tstat-value blue">' + price.toFixed(4) + '</div></div>' +
+      '<div><div class="tstat-label">Day Range</div><div class="tstat-value ' + (st.dayRange<4?'green':st.dayRange<7?'yellow':'red') + '">' + st.dayRange.toFixed(1) + '%</div></div>' +
+      '<div><div class="tstat-label">Session P&L</div><div class="tstat-value ' + (sessionNet>=0?'green':'red') + '">' + fmtPnl(sessionNet) + '</div></div>' +
+      '<div><div class="tstat-label">Win Rate</div><div class="tstat-value white">' + wr + '</div></div>' +
     '</div>' +
     '<div class="band-wrap">' +
       '<div class="band-fill ' + (st.inOsc?'active':'') + '" style="top:' + topPct + '%;height:' + htPct + '%"></div>' +
@@ -396,23 +346,20 @@ function renderTicker(sym) {
       '<div class="band-lbl-p" style="top:' + pPct + '%">' + price.toFixed(4) + '</div>' +
     '</div>' +
     '<div class="osc-row">' +
-      '<div class="osc-item"><div class="osc-item-label">Windows</div><div class="osc-item-value">' + st.oscCount + '</div></div>' +
-      '<div class="osc-item"><div class="osc-item-label">Tick</div><div class="osc-item-value">' + st.tick.toFixed(5) + '</div></div>' +
-      '<div class="osc-item"><div class="osc-item-label">Trades</div><div class="osc-item-value">' + tot + '</div></div>' +
-      '<div class="osc-item"><div class="osc-item-label">Upper</div><div class="osc-item-value green">' + upper.toFixed(4) + '</div></div>' +
+      '<div><div class="osc-item-label">Windows</div><div class="osc-item-value yellow">' + st.oscCount + '</div></div>' +
+      '<div><div class="osc-item-label">Tick</div><div class="osc-item-value">' + st.tick.toFixed(5) + '</div></div>' +
+      '<div><div class="osc-item-label">Trades</div><div class="osc-item-value">' + tot + '</div></div>' +
+      '<div><div class="osc-item-label">Proj/Win</div><div class="osc-item-value green">' + fmtPnl(pnlForRange(upper,lower)) + '</div></div>' +
     '</div>' +
     '<div class="trade-log">' + recentTrades + '</div>';
 }
 
-// Build ticker card placeholders
 function buildCards() {
-  const container = document.getElementById('tickerCards');
-  container.innerHTML = SYMBOLS.map(sym =>
-    '<div class="ticker-card" id="card_' + sym + '"><div style="color:var(--muted);font-size:11px">Loading ' + sym + '...</div></div>'
+  document.getElementById('tickerCards').innerHTML = SYMBOLS.map(sym =>
+    '<div class="ticker-card" id="card_' + sym + '"><div style="color:var(--muted);padding:8px">Loading ' + sym + '...</div></div>'
   ).join('');
 }
 
-// ── MAIN POLL ─────────────────────────────────────────────────────────────────
 async function poll() {
   for (const sym of SYMBOLS) {
     await processSym(sym);
@@ -421,7 +368,6 @@ async function poll() {
   renderCombined();
 }
 
-// ── INIT ──────────────────────────────────────────────────────────────────────
 buildCards();
 setInterval(renderClock, 1000);
 setInterval(renderSession, 60000);
