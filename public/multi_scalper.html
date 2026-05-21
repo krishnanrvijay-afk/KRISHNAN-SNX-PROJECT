@@ -224,16 +224,38 @@ async function processSym(sym) {
   st.dayRange   = (dayHigh - dayLow) / dayLow * 100;
 
   const osc = detectOsc(raw, st.tick);
+  const price = last.close;
+
   if (osc && !st.inOsc) {
-    st.inOsc = true; st.oscUpper = osc.upper; st.oscLower = osc.lower;
-    st.oscStart = last.ts; st.oscCount++;
+    // New oscillation window — enter trade
+    st.inOsc = true;
+    st.oscUpper = osc.upper;
+    st.oscLower = osc.lower;
+    st.oscStart = last.ts;
+    st.oscCount++;
     enterTrade(sym, osc.upper, osc.lower, last.ts);
+
   } else if (osc && st.inOsc) {
-    if (st.openLong  && last.close >= st.openLong.target)  closeTrade(sym, st.openLong.target,  'TARGET');
-    if (st.openShort && last.close <= st.openShort.target) closeTrade(sym, st.openShort.target, 'TARGET');
+    // Still oscillating — check if target hit
+    if (st.openLong && price >= st.openLong.target) {
+      closeTrade(sym, st.openLong.target, 'TARGET');
+      // Re-enter same window immediately
+      enterTrade(sym, st.oscUpper, st.oscLower, last.ts);
+    }
+    if (st.openShort && price <= st.openShort.target) {
+      closeTrade(sym, st.openShort.target, 'TARGET');
+      enterTrade(sym, st.oscUpper, st.oscLower, last.ts);
+    }
+    // Also check if price broke out of band while trade open
+    if (price > st.oscUpper || price < st.oscLower) {
+      if (st.openLong || st.openShort) closeTrade(sym, price, 'BREAKOUT');
+      st.inOsc = false;
+    }
+
   } else if (!osc && st.inOsc) {
+    // Oscillation ended — close at market
     st.inOsc = false;
-    if (st.openLong || st.openShort) closeTrade(sym, last.close, 'BREAKOUT');
+    if (st.openLong || st.openShort) closeTrade(sym, price, 'BREAKOUT');
   }
 }
 
