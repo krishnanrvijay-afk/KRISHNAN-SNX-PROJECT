@@ -107,8 +107,9 @@
   }
   .bp-cell:nth-child(even) { border-right: none; }
   .bp-cell-label {
-    font-size: 9px;
-    color: #4a6272;
+    font-size: 14px;
+    font-weight: 700;
+    color: #fff;
     text-transform: uppercase;
     letter-spacing: 1.5px;
     margin-bottom: 3px;
@@ -158,13 +159,57 @@
   }
   .bp-order-cell:last-child { border-right: none; }
   .bp-order-label {
-    font-size: 9px;
-    color: #4a6272;
+    font-size: 14px;
+    font-weight: 700;
+    color: #fff;
     text-transform: uppercase;
     letter-spacing: 1px;
     margin-bottom: 4px;
     font-family: 'JetBrains Mono', monospace;
   }
+
+  /* ── BEST HOURS SECTION ── */
+  .bp-best-hours {
+    padding: 10px 14px;
+    border-top: 1px dashed #222;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .bp-best-hours-label {
+    font-size: 14px;
+    font-weight: 700;
+    color: #fff;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 6px;
+  }
+  .bp-best-hours-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .bp-best-hour-pill {
+    font-size: 13px;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 4px;
+    background: #111;
+    color: #4a6272;
+    border: 1px solid #222;
+    letter-spacing: 1px;
+  }
+  .bp-best-hour-pill.active {
+    background: rgba(0,230,118,0.15);
+    color: #00e676;
+    border-color: #00e676;
+  }
+
+  /* ── TRADE LOG TABLE ── */
+  .log-table { width: 100%; border-collapse: collapse; font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+  .log-table th { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; padding: 4px 6px; text-align: left; border-bottom: 1px solid var(--border); font-weight: 700; }
+  .log-table td { padding: 8px 6px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  .log-table tr:last-child td { border-bottom: none; }
+  .log-table tr { cursor: pointer; transition: background 0.15s; }
+  .log-table tr:hover td { background: rgba(255,255,255,0.025); }
   .bp-order-value {
     font-family: 'Bebas Neue', sans-serif;
     font-size: 22px;
@@ -352,8 +397,10 @@ const MAKER_FEE   = 0;
 const POLL_MS     = 10000;
 const DEPTH_POLL  = 30000;
 const CANDLE_INT  = 'Min1';
-const MIN_CANDLES = 3;
-const TICK_WINDOW = 5;
+const MIN_CANDLES = 10;
+const TICK_WINDOW = 3;
+const CLUSTER_WIN  = 5;   // last N closes checked for clustering
+const CLUSTER_MIN  = 3;   // minimum closes that must cluster within 1 tick
 const BLACKOUT_H  = [9, 10];
 
 // ── STATE ─────────────────────────────────────────────────────────────────────
@@ -449,10 +496,19 @@ function inferTick(c) {
 
 function detectOsc(candles, tick) {
   if (candles.length < MIN_CANDLES) return null;
+  // Condition 1: highest high − lowest low across last 10 candles ≤ 3 ticks
   const win = candles.slice(-MIN_CANDLES);
   const wh  = Math.max(...win.map(x => x.high));
   const wl  = Math.min(...win.map(x => x.low));
-  return (wh - wl) <= TICK_WINDOW * tick ? { upper: wh, lower: wl } : null;
+  if ((wh - wl) > TICK_WINDOW * tick) return null;
+  // Condition 2: at least 3 of the last 5 closes cluster within 1 tick of each other
+  const closes = candles.slice(-CLUSTER_WIN).map(x => x.close).sort((a, b) => a - b);
+  let clustered = false;
+  for (let i = 0; i <= closes.length - CLUSTER_MIN; i++) {
+    if (closes[i + CLUSTER_MIN - 1] - closes[i] <= tick) { clustered = true; break; }
+  }
+  if (!clustered) return null;
+  return { upper: wh, lower: wl };
 }
 
 // ── P&L CALC ─────────────────────────────────────────────────────────────────
@@ -493,8 +549,10 @@ function buildTrade(sym, entry, target, sl, detectionPrice, candle) {
     holdMinutes: null,
     // Validation
     fillConfirmed:  false,
-    candleLowAtFill: candle ? candle.low : null,
+    candleLowAtFill: null,
     candleHighAtTP:  null,
+    fillPrice:       null,
+    fillTime:        null,
   };
 }
 
@@ -564,9 +622,13 @@ async function processSym(sym) {
 
     if (st.openLong) {
       const wasFilled = recentLow <= st.openLong.entry;
-      if (wasFilled) {
+      if (wasFilled && !st.openLong.fillConfirmed) {
         st.openLong.fillConfirmed   = true;
-        st.openLong.candleLowAtFill = recentLow;  // record the candle that actually touched entry
+        st.openLong.candleLowAtFill = recentLow;   // candle low that proved the fill
+        st.openLong.fillPrice       = st.openLong.entry; // limit order fills exactly at entry
+        st.openLong.fillTime        = fmtTime(Date.now());
+      }
+      if (st.openLong.fillConfirmed) {
         if (recentHigh >= st.openLong.target) {
           closeTrade(sym, st.openLong.target, 'TP', recentHigh);
           st.action = 'SAME_TRADE';
@@ -693,19 +755,6 @@ function renderTicker(sym) {
     actionLabel = 'NO TRADE — WATCHING'; actionColor = '#333';
   }
 
-  // Boarding pass trade rows
-  const recentBP = today.slice(-3).reverse().map(t => {
-    const cls  = (t.net||0) >= 0 ? 'green' : 'red';
-    const ttcls = t.tradeType === 'REPEAT' ? 'type-repeat' : 'type-new';
-    return '<div class="bp-trade-row" onclick="openDetail(\'' + t.id + '\')">'+
-      '<span class="bp-trade-type '+ttcls+'">'+(t.tradeType||'NEW')+'</span>' +
-      '<span class="bp-trade-price">E:'+fmtPrice(t.entry,st.tick)+'</span>' +
-      '<span class="bp-trade-pnl '+cls+'">'+fmtPnl(t.net||0)+'</span>' +
-      '<span class="bp-trade-time">'+t.timeOpen+'</span>' +
-      '<span class="bp-trade-arrow">›</span>' +
-      '</div>';
-  }).join('') || '<div class="bp-no-trades">No trades yet today</div>';
-
   const card = document.getElementById('card_'+sym);
   if (!card) return;
   const borderCls = isBlackout                          ? 'border-wait'  :
@@ -775,8 +824,19 @@ function renderTicker(sym) {
       (isArmed ? '<span style="color:#ffd740">proj '+fmtPnl(projNet)+' · '+Math.round((tpP-entryP)/st.tick)+'tk</span>' : '<span>watching</span>') +
     '</div>' +
 
-    // ── TRADE LOG
-    '<div class="bp-trades">' + recentBP + '</div>';
+    // ── BEST HOURS
+    (function() {
+      const curH = edtHour();
+      const pills = cfg.bestHours.map(h => {
+        const label = String(h).padStart(2,'0') + ':00';
+        const isNow = h === curH;
+        return '<span class="bp-best-hour-pill'+(isNow?' active':'')+'">'+(isNow?'⭐ ':'')+label+'</span>';
+      }).join('');
+      return '<div class="bp-best-hours">' +
+        '<div class="bp-best-hours-label">Best Trading Hours (EDT)</div>' +
+        '<div class="bp-best-hours-list">' + pills + '</div>' +
+        '</div>';
+    })();
 }
 
 // ── FULL TRADE LOG TAB ────────────────────────────────────────────────────────
@@ -794,26 +854,34 @@ function renderFullLog() {
     return;
   }
 
-  document.getElementById('fullTradeLog').innerHTML = [...today].reverse().map(t => {
+  const last10 = [...today].reverse().slice(0, 10);
+
+  const rows = last10.map(t => {
+    const tick = (state[t.sym] ? state[t.sym].tick : 0.0001) || 0.0001;
     const cfg  = TOKEN_CONFIG[t.sym];
-    const cls  = (t.net||0) >= 0 ? 'green' : 'red';
+    const cls  = (t.net||0) >= 0 ? 'var(--green)' : 'var(--red)';
     const ttcls = t.tradeType === 'REPEAT' ? 'type-repeat' : 'type-new';
-    return '<div class="trade-row" onclick="openDetail(\''+t.id+'\')" style="padding:8px 4px">' +
-      '<span class="trade-type '+ttcls+'">'+t.tradeType+'</span>' +
-      '<div style="flex:1;margin:0 8px">' +
-        '<div style="font-size:11px;font-weight:600">'+cfg.label+' · '+t.timeOpen+(t.timeClose?' → '+t.timeClose:'')+'</div>' +
-        '<div style="font-size:10px;color:var(--muted);margin-top:2px">' +
-          'E:'+fmtPrice(t.entry,(state[t.sym] ? state[t.sym].tick : 0.0001)||0.0001)+' TP:'+fmtPrice(t.target,(state[t.sym] ? state[t.sym].tick : 0.0001)||0.0001)+' · '+
-          (t.exitReason||'OPEN')+(t.holdMinutes?' · '+t.holdMinutes+'m':'') +
-        '</div>' +
-      '</div>' +
-      '<div style="text-align:right">' +
-        '<div class="'+cls+'" style="font-size:12px;font-weight:700">'+fmtPnl(t.net||0)+'</div>' +
-        '<div style="font-size:9px;color:var(--muted)">'+(t.outcome||'OPEN')+'</div>' +
-      '</div>' +
-      '<span class="trade-arrow" style="margin-left:6px">›</span>' +
-      '</div>';
+    return '<tr onclick="openDetail(\''+t.id+'\')">' +
+      '<td>'+t.timeOpen+'</td>' +
+      '<td style="font-weight:700;color:#fff">'+cfg.label+'</td>' +
+      '<td><span class="trade-type '+ttcls+'">'+t.tradeType+'</span></td>' +
+      '<td class="yellow">'+fmtPrice(t.entry,tick)+'</td>' +
+      '<td>'+(t.exit ? fmtPrice(t.exit,tick) : '<span style="color:var(--muted)">—</span>')+'</td>' +
+      '<td style="color:'+(t.exitReason==='TP'?'var(--green)':t.exitReason==='SL'?'var(--red)':'var(--muted)')+'">'+
+        (t.exitReason||'OPEN')+
+      '</td>' +
+      '<td style="font-weight:700;color:'+cls+'">'+fmtPnl(t.net||0)+'</td>' +
+      '<td style="color:var(--muted);font-size:10px">›</td>' +
+    '</tr>';
   }).join('');
+
+  document.getElementById('fullTradeLog').innerHTML =
+    '<table class="log-table">' +
+      '<thead><tr>' +
+        '<th>Time</th><th>Token</th><th>Type</th><th>Entry</th><th>Exit</th><th>Reason</th><th>Net P&L</th><th></th>' +
+      '</tr></thead>' +
+      '<tbody>' + rows + '</tbody>' +
+    '</table>';
 }
 
 // ── TRADE DETAIL ──────────────────────────────────────────────────────────────
@@ -825,8 +893,8 @@ function openDetail(tradeId) {
   const cls  = (t.net||0) >= 0 ? 'green' : 'red';
 
   const fillCheck = t.fillConfirmed
-    ? '<span class="fill-check check-pass">✓ Fill confirmed · candle low '+fmtPrice(t.candleLowAtFill,tick)+'</span>'
-    : '<span class="fill-check check-fail">⚠ Fill not confirmed</span>';
+    ? '<span class="fill-check check-pass">✓ Filled @ '+fmtPrice(t.fillPrice,tick)+' · '+t.fillTime+' · candle low '+fmtPrice(t.candleLowAtFill,tick)+'</span>'
+    : '<span class="fill-check check-fail">⚠ Fill not confirmed — limit not yet touched</span>';
 
   document.getElementById('detailContent').innerHTML =
     '<div class="detail-card">' +
@@ -875,7 +943,10 @@ function openDetail(tradeId) {
 
 function closeDetail() {
   document.getElementById('detailView').style.display = 'none';
-  document.getElementById('tab-trades').classList.add('active');
+  const tab = document.getElementById('tab-trades');
+  tab.style.display = '';   // remove inline display:none set by openDetail
+  tab.classList.add('active');
+  renderFullLog();           // refresh table in case new trades arrived while in detail
 }
 
 // ── ORDER BOOK DEPTH TAB ──────────────────────────────────────────────────────
