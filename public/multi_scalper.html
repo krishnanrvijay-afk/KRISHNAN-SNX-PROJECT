@@ -401,7 +401,7 @@ const CANDLE_INT  = 'Min1';
 const MIN_CANDLES = 10;
 const TICK_WINDOW = 3;
 const CLUSTER_WIN  = 5;   // last N closes checked for clustering
-const CLUSTER_MIN  = 3;   // minimum closes that must cluster within 1 tick
+const CLUSTER_MIN  = 3;   // minimum closes that must cluster within 2 ticks
 const BLACKOUT_H  = [9, 10];
 
 // ── STATE ─────────────────────────────────────────────────────────────────────
@@ -503,11 +503,11 @@ function detectOsc(candles, tick) {
   const wh  = Math.max(...win.map(x => x.high));
   const wl  = Math.min(...win.map(x => x.low));
   if ((wh - wl) > TICK_WINDOW * tick) return null;
-  // Condition 2: at least 3 of the last 5 closes cluster within 1 tick of each other
+  // Condition 2: at least 3 of the last 5 closes cluster within 2 ticks of each other
   const closes = candles.slice(-CLUSTER_WIN).map(x => x.close).sort((a, b) => a - b);
   let clustered = false;
   for (let i = 0; i <= closes.length - CLUSTER_MIN; i++) {
-    if (closes[i + CLUSTER_MIN - 1] - closes[i] <= tick) { clustered = true; break; }
+    if (closes[i + CLUSTER_MIN - 1] - closes[i] <= tick * 2) { clustered = true; break; }
   }
   if (!clustered) return null;
   return { upper: wh, lower: wl };
@@ -851,18 +851,27 @@ function renderTicker(sym) {
     })() +
 
     // ── ORDER SETUP: Entry | TP | SL
+    // Only show real coloured levels when a trade is genuinely armed (inOsc).
+    // In WATCHING/FLAT state show greyed-out dashes so the card cannot be
+    // mistaken for an active pending order.
     '<div class="bp-order">' +
       '<div class="bp-order-cell">' +
         '<div class="bp-order-label">Limit Entry</div>' +
-        '<div class="bp-order-value yellow">'+fmtPrice(entryP,st.tick)+'</div>' +
+        (isArmed
+          ? '<div class="bp-order-value yellow">'+fmtPrice(entryP,st.tick)+'</div>'
+          : '<div class="bp-order-value" style="color:#555">—</div>') +
       '</div>' +
       '<div class="bp-order-cell">' +
         '<div class="bp-order-label">Take Profit</div>' +
-        '<div class="bp-order-value green">'+fmtPrice(tpP,st.tick)+'</div>' +
+        (isArmed
+          ? '<div class="bp-order-value green">'+fmtPrice(tpP,st.tick)+'</div>'
+          : '<div class="bp-order-value" style="color:#555">—</div>') +
       '</div>' +
       '<div class="bp-order-cell">' +
         '<div class="bp-order-label">Stop Loss</div>' +
-        '<div class="bp-order-value red">'+fmtPrice(slP,st.tick)+'</div>' +
+        (isArmed
+          ? '<div class="bp-order-value red">'+fmtPrice(slP,st.tick)+'</div>'
+          : '<div class="bp-order-value" style="color:#555">—</div>') +
       '</div>' +
     '</div>' +
 
