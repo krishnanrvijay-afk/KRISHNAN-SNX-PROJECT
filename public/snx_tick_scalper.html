@@ -459,12 +459,11 @@ let alerts       = [];
 let signals      = 0;
 let sessionStart = Date.now();
 let holdInterval = null;
-let lastCandleTs = null;  // track last processed candle
+let lastCandleTs = null;
 
-// 3 states
-const STATE = { WATCHING: 'WATCHING', ARMED: 'ARMED', TRADE: 'TRADE' };
-let state     = STATE.WATCHING;
-let zonePrice = null;  // anchor — set to current price when watching starts
+// Current setup levels — always based on latest X
+let X      = null;  // current price anchor
+let setup  = null;  // { entry, tp, sl, earlyExit }
 
 // ── TIME ──────────────────────────────────────────────────────────────────────
 function nowEST() { return new Date(Date.now() - 5 * 3600000); }
@@ -515,123 +514,44 @@ function inferTick(c) {
   return diffs.length ? Math.min(...diffs) : 0.0001;
 }
 
-// ── FIXED LEVELS relative to zone ────────────────────────────────────────────
-// Zone = anchor price (where pattern was confirmed)
-// TP    = zone + 1 tick  (1 above zone)
-// ENTRY = zone - 1 tick  (1 below zone — where limit buy sits)
-// SL    = zone - 3 ticks (2 below entry)
-function getTP()    { return +(zonePrice).toFixed(6); }
-function getEntry() { return +(zonePrice - tick).toFixed(6); }
-function getSL()    { return +(zonePrice - 3 * tick).toFixed(6); }
-function projWin()  { return NOTIONAL * tick / zonePrice; }
-function fmtPnl(v)  { return (v >= 0 ? '+' : '') + '$' + Math.abs(v).toFixed(2); }
-
-// ── CANDLE-BASED PATTERN DETECTION ───────────────────────────────────────────
-// For a given candle and zone price:
-// Pattern = candle low touched zone OR below AND candle close returned to zone or above
-function candleConfirmsPattern(candle, zone) {
-  const dippedToEntry = candle.low <= zone;           // touched zone or went below
-  const returnedToZone = candle.close >= zone;         // closed back at zone or above
-  return dippedToEntry && returnedToZone;
+// ── BUILD SETUP from X ───────────────────────────────────────────────────────
+// X = current price
+// Entry     = X - 1 tick  (limit buy)
+// TP        = X            (back to current)
+// EarlyExit = X - 2 ticks (came back to 1 below entry = give up)
+// SL        = X - 3 ticks (hard stop)
+function buildSetup(price) {
+  return {
+    x:          +(price).toFixed(6),
+    entry:      +(price - tick).toFixed(6),
+    tp:         +(price).toFixed(6),
+    earlyExit:  +(price - 2 * tick).toFixed(6),
+    sl:         +(price - 3 * tick).toFixed(6),
+  };
 }
 
-// ── PROCESS NEW CANDLE ────────────────────────────────────────────────────────
-function processCandle(candle) {
-  const price = candle.close;
-
-  // First candle ever — set zone and start watching
-  if (zonePrice === null) {
-    zonePrice = price;
-    addAlert('WATCH', 'Watching @ ' + price.toFixed(4), 'blue');
-    return;
-  }
-
-  // ── WATCHING ────────────────────────────────────────────────────────────────
-  if (state === STATE.WATCHING) {
-    // Check if this candle confirms the pattern at current zone
-    if (candleConfirmsPattern(candle, zonePrice)) {
-      state = STATE.ARMED;
-      addAlert('ARMED', 'Pattern confirmed @ ' + zonePrice.toFixed(4) +
-        '  E:' + getEntry().toFixed(4) +
-        ' TP:' + getTP().toFixed(4) +
-        ' SL:' + getSL().toFixed(4), 'yellow');
-      return;
-    }
-    // Price moved up more than 1 tick above zone — reset zone to new price
-    if (price > zonePrice + tick) {
-      zonePrice = price;
-      addAlert('WATCH', 'Zone up → ' + price.toFixed(4), 'blue');
-      return;
-    }
-    // Price dropped more than 3 ticks below zone — reset zone down
-    if (price < zonePrice - 3 * tick) {
-      zonePrice = price;
-      addAlert('WATCH', 'Zone down → ' + price.toFixed(4), 'blue');
-    }
-    return;
-  }
-
-  // ── ARMED ────────────────────────────────────────────────────────────────────
-  if (state === STATE.ARMED) {
-    // Price dipped to entry level — FILLED
-    if (candle.low <= getEntry()) {
-      openTrade = {
-        entry: getEntry(),
-        tp:    getTP(),
-        sl:    getSL(),
-        ts:    Date.now()
-      };
-      state = STATE.TRADE;
-      signals++;
-      startHoldTimer();
-      addAlert('FILL', 'LONG filled @ ' + openTrade.entry.toFixed(4) +
-        '  TP:' + openTrade.tp.toFixed(4) +
-        '  SL:' + openTrade.sl.toFixed(4), 'green');
-      return;
-    }
-    // Price broke above zone + 1 tick — cancel armed, restart watching new price
-    if (price > zonePrice + tick) {
-      zonePrice = price;
-      state     = STATE.WATCHING;
-      addAlert('WATCH', 'Break up — watching @ ' + price.toFixed(4), 'blue');
-    }
-    return;
-  }
-
-  // ── TRADE ────────────────────────────────────────────────────────────────────
-  if (state === STATE.TRADE && openTrade) {
-    // TP hit — candle high touched TP
-    if (candle.high >= openTrade.tp) {
-      const net = NOTIONAL * (openTrade.tp - openTrade.entry) / openTrade.entry;
-      closeTrade(openTrade.tp, 'TP', net);
-      // Re-arm immediately — same zone, pattern still valid
-      state = STATE.ARMED;
-      addAlert('ARMED', 'Re-armed @ ' + zonePrice.toFixed(4), 'yellow');
-      return;
-    }
-    // SL hit — candle low touched SL
-    if (candle.low <= openTrade.sl) {
-      const net = -(NOTIONAL * (openTrade.entry - openTrade.sl) / openTrade.entry) - (TAKER_FEE * NOTIONAL);
-      closeTrade(openTrade.sl, 'SL', net);
-      // Pattern broken — restart watching from current price
-      zonePrice = price;
-      state     = STATE.WATCHING;
-      addAlert('WATCH', 'SL hit — watching @ ' + price.toFixed(4), 'blue');
-      return;
-    }
-    // Price broke above TP without filling — zone shifted up, restart watching
-    if (price > openTrade.tp + tick) {
-      const net = NOTIONAL * (price - openTrade.entry) / openTrade.entry - TAKER_FEE * NOTIONAL;
-      closeTrade(price, 'BREAK', net);
-      zonePrice = price;
-      state     = STATE.WATCHING;
-      addAlert('WATCH', 'Break up — watching @ ' + price.toFixed(4), 'blue');
-    }
-  }
+function resetSetup(price) {
+  X     = price;
+  setup = buildSetup(price);
+  addAlert('SET', 'Setup @ X=' + price.toFixed(4) +
+    ' E:' + setup.entry.toFixed(4) +
+    ' TP:' + setup.tp.toFixed(4) +
+    ' SL:' + setup.sl.toFixed(4), 'blue');
 }
 
-function closeTrade(exitPrice, reason, net) {
+// ── P&L ──────────────────────────────────────────────────────────────────────
+function fmtPnl(v) { return (v >= 0 ? '+' : '') + '$' + Math.abs(v).toFixed(2); }
+function projWin()  { return NOTIONAL * tick / (setup ? setup.entry : 0.31); }
+
+// ── CLOSE TRADE ───────────────────────────────────────────────────────────────
+function closeTrade(exitPrice, reason) {
   if (!openTrade) return;
+  let net = 0;
+  if (reason === 'TP') {
+    net = NOTIONAL * (exitPrice - openTrade.entry) / openTrade.entry; // maker, no fee
+  } else {
+    net = NOTIONAL * (exitPrice - openTrade.entry) / openTrade.entry - TAKER_FEE * NOTIONAL;
+  }
   const trade = {
     side: 'LONG',
     entry: openTrade.entry,
@@ -649,10 +569,85 @@ function closeTrade(exitPrice, reason, net) {
   openTrade = null;
   stopHoldTimer();
   addAlert(net > 0 ? 'WIN' : 'LOSS',
-    'LONG ' + reason + ' @' + exitPrice.toFixed(4) + ' ' + fmtPnl(net),
+    reason + ' @' + exitPrice.toFixed(4) + ' ' + fmtPnl(net),
     net > 0 ? 'green' : 'red');
   renderLog();
   renderStats();
+}
+
+// ── PROCESS CANDLE ────────────────────────────────────────────────────────────
+function processCandle(candle) {
+  const price = candle.close;
+
+  // First run — set initial setup
+  if (!setup) {
+    resetSetup(price);
+    return;
+  }
+
+  // ── IN TRADE ──────────────────────────────────────────────────────────────
+  if (openTrade) {
+    // TP — candle high reached X (tp)
+    if (candle.high >= openTrade.tp) {
+      closeTrade(openTrade.tp, 'TP');
+      resetSetup(price);  // reset with current price after close
+      return;
+    }
+    // Early exit — price came back to X-2 (1 below entry = giving up)
+    if (candle.low <= openTrade.earlyExit) {
+      closeTrade(openTrade.earlyExit, 'EARLY');
+      resetSetup(price);
+      return;
+    }
+    // SL — hard stop at X-3
+    if (candle.low <= openTrade.sl) {
+      closeTrade(openTrade.sl, 'SL');
+      resetSetup(price);
+      return;
+    }
+    // Price flew above X without filling TP properly — shouldn't happen but safety net
+    if (price > openTrade.tp + tick) {
+      closeTrade(price, 'TP');
+      resetSetup(price);
+      return;
+    }
+    return; // still in trade, waiting
+  }
+
+  // ── WAITING FOR FILL ──────────────────────────────────────────────────────
+  // Price dipped to entry level — filled
+  if (candle.low <= setup.entry) {
+    openTrade = {
+      entry:     setup.entry,
+      tp:        setup.tp,
+      earlyExit: setup.earlyExit,
+      sl:        setup.sl,
+      ts:        Date.now()
+    };
+    signals++;
+    startHoldTimer();
+    addAlert('FILL', 'LONG @' + openTrade.entry.toFixed(4) +
+      ' TP:' + openTrade.tp.toFixed(4) +
+      ' SL:' + openTrade.sl.toFixed(4), 'green');
+
+    // Check exits on same candle
+    if (candle.high >= openTrade.tp) {
+      closeTrade(openTrade.tp, 'TP');
+      resetSetup(price);
+      return;
+    }
+    if (candle.low <= openTrade.sl) {
+      closeTrade(openTrade.sl, 'SL');
+      resetSetup(price);
+      return;
+    }
+    return;
+  }
+
+  // Price moved up — reset X to new price
+  if (price > setup.x + tick) {
+    resetSetup(price);
+  }
 }
 
 // ── HOLD TIMER ────────────────────────────────────────────────────────────────
@@ -692,51 +687,45 @@ function renderPrices(price, chg) {
   document.getElementById('tickSize').textContent  = tick.toFixed(5);
 }
 
-function renderLong() {
-  if (!zonePrice) return;
-  const lc = document.getElementById('longCard');
-  const stateColors = { WATCHING: 'var(--blue)', ARMED: 'var(--yellow)', TRADE: 'var(--green)' };
-  document.getElementById('stateLabel').textContent = state;
-  document.getElementById('stateLabel').style.color = stateColors[state];
+function renderLong(price) {
+  if (!setup) return;
+  const lc  = document.getElementById('longCard');
+  const src = openTrade || setup;
+  const st  = openTrade ? 'TRADE' : 'ARMED';
+  const stateColors = { TRADE: 'var(--green)', ARMED: 'var(--yellow)' };
 
-  // Always show fixed levels — locked to zone price
-  const src = openTrade || { entry: getEntry(), tp: getTP(), sl: getSL() };
-  document.getElementById('longEntry').textContent = src.entry.toFixed(4);
-  document.getElementById('longTP').textContent    = src.tp.toFixed(4);
-  document.getElementById('longSL').textContent    = src.sl.toFixed(4);
-  document.getElementById('longProj').textContent  = fmtPnl(projWin());
-
-  if (state === STATE.TRADE)  lc.className = 'sig-card long-active';
-  else if (state === STATE.ARMED) lc.className = 'sig-card long-active';
-  else lc.className = 'sig-card';
+  document.getElementById('stateLabel').textContent = st;
+  document.getElementById('stateLabel').style.color = stateColors[st];
+  document.getElementById('longEntry').textContent  = src.entry.toFixed(4);
+  document.getElementById('longTP').textContent     = src.tp.toFixed(4);
+  document.getElementById('longSL').textContent     = src.sl.toFixed(4);
+  document.getElementById('longProj').textContent   = fmtPnl(projWin());
+  lc.className = openTrade ? 'sig-card long-active' : 'sig-card';
 }
 
 function renderLadder(price) {
-  if (!zonePrice) return;
-  // Fixed labels — always relative to zone, not current price
-  const tp    = getTP();
-  const zone  = zonePrice;
-  const entry = getEntry();
-  const sl    = getSL();
-  const rows  = [];
+  if (!setup) return;
+  const src  = openTrade || setup;
+  const rows = [];
 
-  // Show from zone+2 down to zone-4 — 7 levels
-  for (let i = 2; i >= -4; i--) {
-    const p = +(zone + i * tick).toFixed(6);
+  // Show X+2 down to X-4
+  const top = +(src.tp + 2 * tick).toFixed(6);
+  for (let i = 0; i >= -6; i--) {
+    const p = +(top + i * tick).toFixed(6);
     let tag = '';
     let tagClass = '';
-    if (Math.abs(p - tp)    < tick * 0.5) { tag = 'TP';    tagClass = 'tag-tp-long'; }
-    if (Math.abs(p - zone)  < tick * 0.5) { tag = 'ZONE';  tagClass = 'tag-entry'; }
-    if (Math.abs(p - entry) < tick * 0.5) { tag = 'ENTRY'; tagClass = 'tag-entry'; }
-    if (Math.abs(p - sl)    < tick * 0.5) { tag = 'SL';    tagClass = 'tag-sl'; }
-    // Overlay NOW on top of any label
-    if (Math.abs(p - price) < tick * 0.5) { tag = tag ? tag + '/NOW' : 'NOW'; tagClass = 'tag-current'; }
-
-    const isAboveZone = p > zone;
-    const isBelowEntry = p < entry;
-    const col = isAboveZone ? 'green' : isBelowEntry ? 'red' : 'blue';
-    const arrow = isAboveZone ? '▲' : isBelowEntry ? '▼' : '●';
-
+    if (Math.abs(p - src.tp)         < tick * 0.5) { tag = 'TP';    tagClass = 'tag-tp-long'; }
+    if (Math.abs(p - src.entry)      < tick * 0.5) { tag = 'ENTRY'; tagClass = 'tag-entry'; }
+    if (Math.abs(p - src.earlyExit)  < tick * 0.5) { tag = 'EARLY'; tagClass = 'tag-sl'; }
+    if (Math.abs(p - src.sl)         < tick * 0.5) { tag = 'SL';    tagClass = 'tag-sl'; }
+    if (Math.abs(p - price)          < tick * 0.5) {
+      tag = tag ? tag + '/NOW' : 'NOW';
+      tagClass = 'tag-current';
+    }
+    const isAbove = p >= src.tp;
+    const isBelow = p < src.entry;
+    const col   = isAbove ? 'green' : isBelow ? 'red' : 'blue';
+    const arrow = isAbove ? '▲' : isBelow ? '▼' : '●';
     rows.push(
       '<div class="ladder-row">' +
       '<span class="ladder-price ' + col + '">' + p.toFixed(4) + '</span>' +
@@ -773,14 +762,14 @@ function renderLog() {
   el.style.color = totalNet >= 0 ? 'var(--green)' : 'var(--red)';
   if (!rows.length) {
     document.getElementById('logRows').innerHTML =
-      '<div style="color:var(--muted);font-size:10px;padding:6px 0">Waiting for first tick signal...</div>';
+      '<div style="color:var(--muted);font-size:10px;padding:6px 0">Waiting for first fill...</div>';
     return;
   }
   document.getElementById('logRows').innerHTML = rows.map(t => {
     const cls = t.net >= 0 ? 'green' : 'red';
     return '<div class="log-row">' +
       '<span class="log-side long">L</span>' +
-      '<span class="log-reason ' + (t.reason==='TP'?'green':t.reason==='SL'?'red':'yellow') + '">' + t.reason + '</span>' +
+      '<span class="log-reason ' + (t.reason==='TP'?'green':'red') + '">' + t.reason + '</span>' +
       '<span>' + t.entry.toFixed(4) + '</span>' +
       '<span>' + t.exit.toFixed(4) + '</span>' +
       '<span class="log-pnl ' + cls + '">' + fmtPnl(t.net) + '</span>' +
@@ -829,13 +818,13 @@ async function poll() {
 
   renderPrices(price, pctChg);
 
-  // Only process a candle once — check if it is new
+  // Process each new candle once
   if (last.ts !== lastCandleTs) {
     lastCandleTs = last.ts;
     processCandle(last);
   }
 
-  renderLong();
+  renderLong(price);
   renderLadder(price);
   renderCandles(candles);
 }
@@ -846,7 +835,7 @@ renderClock();
 renderLog();
 renderStats();
 document.getElementById('holdTimer').style.display = 'none';
-addAlert('GO', 'SNX Tick Scalper v6 · candle-based · WATCHING → ARMED → TRADE', 'green');
+addAlert('GO', 'SNX Tick Scalper v7 · X-1 entry · X TP · X-3 SL', 'green');
 poll();
 setInterval(poll, POLL_MS);
 </script>
