@@ -574,17 +574,25 @@ async function processSym(sym) {
           }
         } else if (recentLow <= st.openLong.sl) {
           closeTrade(sym, st.openLong.sl, 'SL', null);
+          st.inOsc  = false;  // force fresh oscillation confirmation before next entry
           st.action = 'NO_TRADE';
         }
       }
     } else if (last.close >= st.oscLower && !inBlackout()) {
+      st.action = 'ARMED';
       openTrade(sym, st.oscLower, st.oscUpper, st.oscLower - 2 * st.tick, last.close, last);
     }
 
   } else if (!osc && st.inOsc) {
     st.inOsc  = false;
     st.action = 'NO_TRADE';
-    if (st.openLong) closeTrade(sym, last.close, 'BREAK', null);
+    if (st.openLong) {
+      if (st.openLong.fillConfirmed) {
+        closeTrade(sym, last.close, 'BREAK', null);  // real fill — close at market
+      } else {
+        st.openLong = null;  // limit order never touched — discard silently, no trade record
+      }
+    }
   }
 }
 
