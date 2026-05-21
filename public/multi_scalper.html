@@ -43,9 +43,10 @@
 
   /* Ticker card */
   .ticker-card { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 12px; margin-bottom: 10px; }
-  .ticker-card.osc-active { border-color: var(--green); }
-  .ticker-card.sig-yellow { border-color: var(--yellow); }
-  .ticker-card.sig-red    { border-color: var(--red); }
+  .ticker-card.border-wait  { border-color: var(--red) !important; }
+  .ticker-card.border-same  { border-color: var(--green) !important; }
+  .ticker-card.border-new   { border-color: var(--blue) !important; }
+  .ticker-card.border-armed { border-color: var(--yellow) !important; }
 
   .ticker-hdr { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
   .ticker-name { font-family: 'Syne', sans-serif; font-size: 18px; font-weight: 800; color: #fff; }
@@ -243,6 +244,8 @@ function closeTrade(sym, exitPrice, reason) {
   const net  = NOTIONAL * (exitPrice - t.entry) / t.entry - fees;
   st.trades.push({
     sym, entry: t.entry, exit: exitPrice,
+    priceAtEntry: st.lastPrice,
+    tradeType: st.action === 'SAME_TRADE' ? 'REPEAT' : 'NEW',
     ts: t.ts, tsClose: Date.now(),
     net: +net.toFixed(2),
     outcome: net > 0 ? 'WIN' : 'LOSS', reason
@@ -419,10 +422,12 @@ function renderTicker(sym) {
 
   // Recent trades
   const recentTrades = [...today].reverse().slice(0,4).map(t => {
-    const cls = t.net >= 0 ? 'green' : 'red';
+    const cls     = t.net >= 0 ? 'green' : 'red';
+    const typeCls = t.tradeType === 'REPEAT' ? 'color:var(--green)' : 'color:var(--blue)';
+    const typeLabel = t.tradeType === 'REPEAT' ? 'REPEAT' : 'NEW';
     return '<div class="trade-row">' +
-      '<span class="trade-side long">L</span>' +
-      '<span class="trade-prices">' + fmtPrice(t.entry,st.tick) + ' → ' + fmtPrice(t.exit,st.tick) + '</span>' +
+      '<span style="font-size:9px;font-weight:700;padding:1px 5px;border-radius:2px;' + typeCls + ';border:1px solid currentColor;min-width:42px;text-align:center">' + typeLabel + '</span>' +
+      '<span style="color:var(--muted);flex:1;font-size:10px">@' + fmtPrice(t.priceAtEntry || t.entry, st.tick) + '</span>' +
       '<span class="trade-pnl ' + cls + '">' + fmtPnl(t.net) + '</span>' +
       '<span class="trade-time">' + fmtTime(t.ts) + '</span>' +
       '</div>';
@@ -430,7 +435,14 @@ function renderTicker(sym) {
 
   const card = document.getElementById('card_' + sym);
   if (!card) return;
-  card.className = 'ticker-card ' + sigClass + (st.inOsc?' osc-active':'');
+  // Border based on action signal
+  let borderClass = '';
+  if (inBlackout()) borderClass = 'border-wait';
+  else if (st.action === 'SAME_TRADE' && st.inOsc) borderClass = 'border-same';
+  else if (st.action === 'NEW_SETUP'   && st.inOsc) borderClass = 'border-new';
+  else if (st.action === 'ARMED'       && st.inOsc) borderClass = 'border-armed';
+  else borderClass = 'border-wait';
+  card.className = 'ticker-card ' + borderClass;
   card.innerHTML =
     '<div class="ticker-hdr">' +
       '<div class="ticker-name">' + sym.replace('USDT','') + '</div>' +
@@ -442,13 +454,7 @@ function renderTicker(sym) {
       '<div><div class="pstat-label">Session P&L</div><div class="pstat-value ' + (net>=0?'green':'red') + '">' + fmtPnl(net) + '</div></div>' +
       '<div><div class="pstat-label">Win Rate</div><div class="pstat-value white">' + wr + ' <span style="font-size:10px;color:var(--muted)">(' + tot + ')</span></div></div>' +
     '</div>' +
-    '<div class="band-wrap">' +
-      '<div class="band-fill ' + (st.inOsc?'active':'') + '" style="top:' + topPct + '%;height:' + htPct + '%"></div>' +
-      '<div class="band-line" style="top:' + pPct + '%"></div>' +
-      '<div class="band-lbl-u">' + fmtPrice(upper,st.tick) + '</div>' +
-      '<div class="band-lbl-l">' + fmtPrice(lower,st.tick) + '</div>' +
-      '<div class="band-lbl-p" style="top:' + pPct + '%">' + fmtPrice(price,st.tick) + '</div>' +
-    '</div>' +
+
     actionHtml +
     setupHtml +
     '<div class="log-section">' +
