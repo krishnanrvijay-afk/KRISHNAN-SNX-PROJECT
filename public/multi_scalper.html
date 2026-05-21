@@ -617,18 +617,47 @@ async function processSym(sym) {
     }
 
   } else if (osc && st.inOsc) {
+    // Part A: Band tightening — if the current 10-candle window has produced a
+    // strictly narrower band (by at least half a tick) and the trade has not yet
+    // been filled, update the armed levels to the tighter band so we capture
+    // the repeat scalps that form inside the original wider consolidation.
+    const newWidth = osc.upper - osc.lower;
+    const curWidth = st.oscUpper - st.oscLower;
+    if (newWidth < curWidth - st.tick * 0.5 && (!st.openLong || !st.openLong.fillConfirmed)) {
+      st.oscUpper = osc.upper;
+      st.oscLower = osc.lower;
+      if (st.openLong) {
+        st.openLong.entry     = osc.lower;
+        st.openLong.target    = osc.upper;
+        st.openLong.sl        = osc.lower - 2 * st.tick;
+        st.openLong.bandLower = osc.lower;
+        st.openLong.bandUpper = osc.upper;
+        st.openLong.bandTicks = Math.round((osc.upper - osc.lower) / st.tick);
+      }
+    }
+
     const recentHigh = Math.max(...raw.slice(-3).map(c => c.high));
     const recentLow  = Math.min(...raw.slice(-3).map(c => c.low));
 
     if (st.openLong) {
       const wasFilled = recentLow <= st.openLong.entry;
       if (wasFilled && !st.openLong.fillConfirmed) {
-        st.openLong.fillConfirmed   = true;
-        st.openLong.candleLowAtFill = recentLow;   // candle low that proved the fill
-        st.openLong.fillPrice       = st.openLong.entry; // limit order fills exactly at entry
-        st.openLong.fillTime        = fmtTime(Date.now());
+        // Part B: Spike-sweep guard — if the candle low touches both the entry
+        // AND the SL in the same candle, price blew straight through us on a
+        // spike. That is not a valid fill — discard the trade silently and
+        // reset so we wait for fresh oscillation rather than booking a loss.
+        if (recentLow <= st.openLong.sl) {
+          st.openLong = null;
+          st.inOsc    = false;
+          st.action   = 'NO_TRADE';
+        } else {
+          st.openLong.fillConfirmed   = true;
+          st.openLong.candleLowAtFill = recentLow;
+          st.openLong.fillPrice       = st.openLong.entry;
+          st.openLong.fillTime        = fmtTime(Date.now());
+        }
       }
-      if (st.openLong.fillConfirmed) {
+      if (st.openLong && st.openLong.fillConfirmed) {
         if (recentHigh >= st.openLong.target) {
           closeTrade(sym, st.openLong.target, 'TP', recentHigh);
           st.action = 'SAME_TRADE';
@@ -637,12 +666,12 @@ async function processSym(sym) {
           }
         } else if (recentLow <= st.openLong.sl) {
           closeTrade(sym, st.openLong.sl, 'SL', null);
-          st.inOsc  = false;  // force fresh oscillation confirmation before next entry
+          st.inOsc  = false;
           st.action = 'NO_TRADE';
         }
       }
     } else if (last.close >= st.oscLower && !inBlackout()) {
-      if (st.action !== 'SAME_TRADE') st.action = 'ARMED';  // preserve SAME_TRADE for deferred re-entries
+      if (st.action !== 'SAME_TRADE') st.action = 'ARMED';
       openTrade(sym, st.oscLower, st.oscUpper, st.oscLower - 2 * st.tick, last.close, last);
     }
 
