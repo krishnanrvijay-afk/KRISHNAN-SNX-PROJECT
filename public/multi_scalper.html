@@ -58,47 +58,163 @@
   .cpill-label { font-size: 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 3px; }
   .cpill-value { font-size: 15px; font-weight: 700; }
 
-  /* ── TICKER CARD ── */
-  .ticker-card { background: var(--card); border: 2px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 10px; transition: border-color 0.3s; }
-  .ticker-card.border-wait  { border-color: rgba(255,61,61,0.4); }
-  .ticker-card.border-armed { border-color: rgba(255,215,64,0.6); }
-  .ticker-card.border-same  { border-color: rgba(0,230,118,0.6); }
-  .ticker-card.border-new   { border-color: rgba(0,200,255,0.6); }
+  /* ── TICKER CARD — Boarding pass aesthetic ── */
+  .ticker-card {
+    background: #000;
+    border: 2px solid #222;
+    border-radius: 10px;
+    margin-bottom: 12px;
+    overflow: hidden;
+    transition: border-color 0.3s;
+  }
+  .ticker-card.border-wait  { border-color: #ff3d3d; }
+  .ticker-card.border-armed { border-color: #ffd740; }
+  .ticker-card.border-same  { border-color: #00e676; }
+  .ticker-card.border-new   { border-color: #00c8ff; }
 
-  .ticker-hdr { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-  .ticker-name { font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 2px; color: var(--white); }
-  .badge-row { display: flex; gap: 5px; align-items: center; }
-  .badge { font-size: 9px; padding: 2px 7px; border-radius: 20px; font-weight: 700; letter-spacing: 0.5px; }
-  .badge-green  { background: rgba(0,230,118,0.12); color: var(--green); border: 1px solid rgba(0,230,118,0.3); }
-  .badge-yellow { background: rgba(255,215,64,0.12); color: var(--yellow); border: 1px solid rgba(255,215,64,0.3); }
-  .badge-red    { background: rgba(255,61,61,0.12); color: var(--red); border: 1px solid rgba(255,61,61,0.3); }
-  .badge-flat   { background: rgba(74,98,114,0.15); color: var(--muted); border: 1px solid var(--border); }
-  .badge-osc    { background: rgba(0,230,118,0.18); color: var(--green); border: 1px solid rgba(0,230,118,0.4); animation: pulse 1.5s ease-in-out infinite; }
+  /* Card top strip — token name + badges */
+  .bp-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 14px 10px;
+    border-bottom: 1px dashed #222;
+  }
+  .bp-token {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 36px;
+    letter-spacing: 3px;
+    color: #fff;
+    line-height: 1;
+  }
+  .bp-badges { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+  .badge { font-size: 9px; padding: 2px 8px; border-radius: 3px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; }
+  .badge-green  { background: #00e676; color: #000; }
+  .badge-yellow { background: #ffd740; color: #000; }
+  .badge-red    { background: #ff3d3d; color: #fff; }
+  .badge-flat   { background: #222; color: #4a6272; border: 1px solid #333; }
+  .badge-osc    { background: #00e676; color: #000; animation: pulse 1.5s ease-in-out infinite; }
 
-  /* ── PRICE ROW ── */
-  .price-row { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 6px; margin-bottom: 10px; }
+  /* Price grid — airport departures board style */
+  .bp-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    border-bottom: 1px dashed #222;
+  }
+  .bp-cell {
+    padding: 10px 14px;
+    border-right: 1px dashed #222;
+  }
+  .bp-cell:nth-child(even) { border-right: none; }
+  .bp-cell-label {
+    font-size: 9px;
+    color: #4a6272;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    margin-bottom: 3px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .bp-cell-value {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 28px;
+    letter-spacing: 1px;
+    line-height: 1;
+    color: #fff;
+  }
+  .bp-cell-value.green { color: #00e676; }
+  .bp-cell-value.yellow { color: #ffd740; }
+  .bp-cell-value.red { color: #ff3d3d; }
+  .bp-cell-value.blue { color: #00c8ff; }
+
+  /* Action strip */
+  .bp-action {
+    padding: 10px 14px;
+    border-bottom: 1px dashed #222;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .bp-action-label {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 18px;
+    letter-spacing: 2px;
+  }
+  .bp-action-detail {
+    text-align: right;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    line-height: 1.6;
+  }
+
+  /* Order setup — 3 column boarding info */
+  .bp-order {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    border-bottom: 1px dashed #222;
+  }
+  .bp-order-cell {
+    padding: 10px 14px;
+    border-right: 1px dashed #222;
+  }
+  .bp-order-cell:last-child { border-right: none; }
+  .bp-order-label {
+    font-size: 9px;
+    color: #4a6272;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 4px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .bp-order-value {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 22px;
+    letter-spacing: 1px;
+    line-height: 1;
+  }
+
+  /* Proj/meta strip */
+  .bp-meta {
+    padding: 8px 14px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: #4a6272;
+    border-bottom: 1px dashed #222;
+    display: flex;
+    justify-content: space-between;
+  }
+
+  /* Trade log rows */
+  .bp-trades { padding: 0 14px 6px; }
+  .bp-trade-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 0;
+    border-bottom: 1px solid #111;
+    cursor: pointer;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .bp-trade-row:last-child { border-bottom: none; }
+  .bp-trade-type {
+    font-size: 9px;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 2px;
+    min-width: 42px;
+    text-align: center;
+    letter-spacing: 0.5px;
+  }
+  .type-new    { border: 1px solid #00c8ff; color: #00c8ff; }
+  .type-repeat { border: 1px solid #00e676; color: #00e676; }
+  .bp-trade-price { flex: 1; font-size: 11px; color: #4a6272; }
+  .bp-trade-pnl { font-size: 13px; font-weight: 700; min-width: 72px; text-align: right; }
+  .bp-trade-time { font-size: 10px; color: #333; min-width: 34px; text-align: right; }
+  .bp-trade-arrow { color: #333; font-size: 12px; }
+  .bp-no-trades { padding: 10px 0; font-size: 10px; color: #333; font-family: 'JetBrains Mono', monospace; }
+
+  /* price row aliases kept for combined bar */
   .pstat-label { font-size: 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 2px; }
   .pstat-value { font-size: 16px; font-weight: 700; }
-
-  /* ── ACTION BANNER ── */
-  .action-banner { border-radius: 5px; padding: 8px 12px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
-  .action-banner.wait  { background: rgba(255,61,61,0.07);  border: 1px solid rgba(255,61,61,0.2);  }
-  .action-banner.armed { background: rgba(255,215,64,0.07); border: 1px solid rgba(255,215,64,0.3); }
-  .action-banner.same  { background: rgba(0,230,118,0.07);  border: 1px solid rgba(0,230,118,0.3);  }
-  .action-banner.new   { background: rgba(0,200,255,0.07);  border: 1px solid rgba(0,200,255,0.3);  }
-  .action-label { font-size: 11px; font-weight: 700; }
-  .action-levels { font-size: 10px; color: var(--muted); text-align: right; line-height: 1.5; }
-
-  /* ── SETUP BOX ── */
-  .setup-box { background: var(--bg); border: 1px solid var(--border); border-radius: 5px; padding: 10px; margin-bottom: 8px; }
-  .setup-box.armed { border-color: rgba(255,215,64,0.4); }
-  .setup-hdr { display: flex; justify-content: space-between; margin-bottom: 8px; }
-  .setup-title { font-size: 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
-  .setup-status { font-size: 9px; font-weight: 700; }
-  .setup-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 6px; }
-  .setup-lbl { font-size: 8px; color: var(--muted); text-transform: uppercase; margin-bottom: 2px; }
-  .setup-val { font-size: 17px; font-weight: 700; }
-  .setup-note { font-size: 9px; color: var(--muted); padding-top: 6px; border-top: 1px solid var(--border); }
 
   /* ── ORDER BOOK DEPTH ── */
   .depth-box { background: var(--bg); border: 1px solid var(--border); border-radius: 5px; padding: 8px 10px; margin-bottom: 8px; }
@@ -588,25 +704,102 @@ function renderTicker(sym) {
     else if (st.action === 'ARMED' && st.inOsc) borderCls = 'border-armed';
   }
 
+  // Action strip values
+  let actionLabel = '', actionColor = '#4a6272', actionE = '--', actionTP = '--';
+  if (isBlackout) {
+    actionLabel = 'BLACKOUT — NO TRADE'; actionColor = '#ff3d3d';
+  } else if (st.action === 'SAME_TRADE' && st.inOsc) {
+    actionLabel = 'SAME TRADE'; actionColor = '#00e676';
+    actionE = fmtPrice(st.oscLower,st.tick); actionTP = fmtPrice(st.oscUpper,st.tick);
+  } else if (st.action === 'NEW_SETUP' && st.inOsc) {
+    actionLabel = 'NEW SETUP'; actionColor = '#00c8ff';
+    actionE = fmtPrice(st.oscLower,st.tick); actionTP = fmtPrice(st.oscUpper,st.tick);
+  } else if (st.action === 'ARMED' && st.inOsc) {
+    actionLabel = 'ARMED'; actionColor = '#ffd740';
+    actionE = fmtPrice(st.oscLower,st.tick); actionTP = fmtPrice(st.oscUpper,st.tick);
+  } else {
+    actionLabel = 'NO TRADE — WATCHING'; actionColor = '#333';
+  }
+
+  // Boarding pass trade rows
+  const recentBP = today.slice(-3).reverse().map(t => {
+    const cls  = (t.net||0) >= 0 ? 'green' : 'red';
+    const ttcls = t.tradeType === 'REPEAT' ? 'type-repeat' : 'type-new';
+    return '<div class="bp-trade-row" onclick="openDetail(''+t.id+'')">' +
+      '<span class="bp-trade-type '+ttcls+'">'+(t.tradeType||'NEW')+'</span>' +
+      '<span class="bp-trade-price">@'+fmtPrice(t.detectionPrice||t.entry,st.tick)+'</span>' +
+      '<span class="bp-trade-pnl '+cls+'">'+fmtPnl(t.net||0)+'</span>' +
+      '<span class="bp-trade-time">'+t.timeOpen+'</span>' +
+      '<span class="bp-trade-arrow">›</span>' +
+      '</div>';
+  }).join('') || '<div class="bp-no-trades">No trades yet today</div>';
+
   const card = document.getElementById('card_'+sym);
   if (!card) return;
   card.className = 'ticker-card ' + borderCls;
   card.innerHTML =
-    '<div class="ticker-hdr">' +
-      '<div class="ticker-name">'+cfg.label+'</div>' +
-      '<div class="badge-row">'+sigBadge+oscBadge+hourBadge+'</div>' +
+    // ── TOP: Token name + status badges
+    '<div class="bp-header">' +
+      '<div class="bp-token">'+cfg.label+'</div>' +
+      '<div class="bp-badges">'+sigBadge+oscBadge+hourBadge+'</div>' +
     '</div>' +
-    '<div class="price-row">' +
-      '<div><div class="pstat-label">Price</div><div class="pstat-value blue">'+fmtPrice(price,st.tick)+'</div></div>' +
-      '<div><div class="pstat-label">Range</div><div class="pstat-value '+(st.dayRange<4?'green':st.dayRange<7?'yellow':'red')+'">'+st.dayRange.toFixed(1)+'%</div></div>' +
-      '<div><div class="pstat-label">P&L Today</div><div class="pstat-value '+(net>=0?'green':'red')+'">'+fmtPnl(net)+'</div></div>' +
-      '<div><div class="pstat-label">Win '+(tot?'('+tot+')':'')+'</div><div class="pstat-value white">'+wr+'</div></div>' +
+
+    // ── ROW 1: Price + Range
+    '<div class="bp-grid">' +
+      '<div class="bp-cell">' +
+        '<div class="bp-cell-label">Last Price</div>' +
+        '<div class="bp-cell-value blue">'+fmtPrice(price,st.tick)+'</div>' +
+      '</div>' +
+      '<div class="bp-cell">' +
+        '<div class="bp-cell-label">Day Range</div>' +
+        '<div class="bp-cell-value '+(st.dayRange<4?'green':st.dayRange<7?'yellow':'red')+'">'+st.dayRange.toFixed(1)+'%</div>' +
+      '</div>' +
     '</div>' +
-    actionHtml + setupHtml +
-    '<div class="log-section">' +
-      '<div class="log-hdr"><span class="log-title">Recent Trades</span><span style="font-size:9px;color:var(--muted)">Tap for details →</span></div>' +
-      recentTrades +
-    '</div>';
+
+    // ── ROW 2: P&L + Win Rate
+    '<div class="bp-grid">' +
+      '<div class="bp-cell">' +
+        '<div class="bp-cell-label">Session P&L</div>' +
+        '<div class="bp-cell-value '+(net>=0?'green':'red')+'">'+fmtPnl(net)+'</div>' +
+      '</div>' +
+      '<div class="bp-cell">' +
+        '<div class="bp-cell-label">Win Rate'+(tot?' ('+tot+')':'')+'</div>' +
+        '<div class="bp-cell-value">'+wr+'</div>' +
+      '</div>' +
+    '</div>' +
+
+    // ── ACTION STRIP
+    '<div class="bp-action" style="border-left:4px solid '+actionColor+'">' +
+      '<div class="bp-action-label" style="color:'+actionColor+'">'+actionLabel+'</div>' +
+      '<div class="bp-action-detail" style="color:'+actionColor+'">' +
+        (actionE!=='--' ? 'E: '+actionE+'<br>TP: '+actionTP : '') +
+      '</div>' +
+    '</div>' +
+
+    // ── ORDER SETUP: Entry | TP | SL
+    '<div class="bp-order">' +
+      '<div class="bp-order-cell">' +
+        '<div class="bp-order-label">Limit Entry</div>' +
+        '<div class="bp-order-value yellow">'+fmtPrice(entryP,st.tick)+'</div>' +
+      '</div>' +
+      '<div class="bp-order-cell">' +
+        '<div class="bp-order-label">Take Profit</div>' +
+        '<div class="bp-order-value green">'+fmtPrice(tpP,st.tick)+'</div>' +
+      '</div>' +
+      '<div class="bp-order-cell">' +
+        '<div class="bp-order-label">Stop Loss</div>' +
+        '<div class="bp-order-value red">'+fmtPrice(slP,st.tick)+'</div>' +
+      '</div>' +
+    '</div>' +
+
+    // ── META: margin · leverage · proj
+    '<div class="bp-meta">' +
+      '<span>$'+cfg.margin+' · '+cfg.leverage+'x · '+fmtK(cfg.notional)+'</span>' +
+      (isArmed ? '<span style="color:#ffd740">proj '+fmtPnl(projNet)+' · '+Math.round((tpP-entryP)/st.tick)+'tk</span>' : '<span>watching</span>') +
+    '</div>' +
+
+    // ── TRADE LOG
+    '<div class="bp-trades">' + recentBP + '</div>';
 }
 
 // ── FULL TRADE LOG TAB ────────────────────────────────────────────────────────
