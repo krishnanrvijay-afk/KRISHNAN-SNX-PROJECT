@@ -335,6 +335,11 @@
 </div>
 
 <script>
+window.onerror = function(msg, src, line, col, err) {
+  const d = document.getElementById('tickerCards');
+  if (d) d.innerHTML = '<div style="padding:20px;background:#1a0000;border:1px solid #ff3d3d;border-radius:6px;font-family:monospace;font-size:11px;color:#ff3d3d"><b>JS ERROR:</b><br>' + msg + '<br>Line: ' + line + '</div>';
+  return false;
+};
 // ── CONFIG — Research-validated parameters ────────────────────────────────────
 const TOKEN_CONFIG = {
   SNXUSDT:  { margin: 100,   leverage: 100, notional: 10000,  maxLeverage: 100, bestHours: [5,18,19],     label: 'SNX' },
@@ -628,7 +633,11 @@ function renderTicker(sym) {
   const st    = state[sym];
   const cfg   = TOKEN_CONFIG[sym];
   const price = st.lastPrice;
-  if (!price) return;
+  if (!price) {
+    const card = document.getElementById('card_'+sym);
+    if (card) card.innerHTML = '<div style="padding:20px;text-align:center"><div style="font-family:Bebas Neue,sans-serif;font-size:28px;color:#fff;letter-spacing:2px">'+TOKEN_CONFIG[sym].label+'</div><div style="color:#4a6272;font-size:11px;margin-top:8px">Fetching data...</div></div>';
+    return;
+  }
 
   const today  = st.trades.filter(t => t.ts >= st.sessionStart);
   const net    = today.reduce((s,t) => s+(t.net||0), 0);
@@ -976,6 +985,7 @@ async function poll() {
 SYMBOLS.forEach(s => { allTrades.push(...state[s].trades); });
 
 buildCards();
+SYMBOLS.forEach(renderTicker); // Show loading state immediately
 setInterval(renderClock, 1000);
 setInterval(renderSession, 60000);
 renderClock();
