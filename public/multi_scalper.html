@@ -273,27 +273,45 @@ async function processSym(sym) {
   const osc = detectOsc(raw, st.tick);
 
   if (osc && !st.inOsc) {
-    // New oscillation detected
+    // New oscillation detected — set band but dont enter yet
     const isNewBand = st.prevOscLower !== osc.lower || st.prevOscUpper !== osc.upper;
-    st.inOsc       = true;
+    st.inOsc        = true;
     st.prevOscLower = st.oscLower;
     st.prevOscUpper = st.oscUpper;
-    st.oscUpper    = osc.upper;
-    st.oscLower    = osc.lower;
+    st.oscUpper     = osc.upper;
+    st.oscLower     = osc.lower;
     st.oscCount++;
-    st.action      = isNewBand && st.prevOscLower > 0 ? 'NEW_SETUP' : 'ARMED';
-    enterTrade(sym, osc.upper, osc.lower, last.ts);
+    st.action       = isNewBand && st.prevOscLower > 0 ? 'NEW_SETUP' : 'ARMED';
+    // Only enter if price is AT or ABOVE entry — meaning it can dip to fill
+    // Don't enter if price already below entry (missed the setup)
+    if (last.close >= st.oscLower) {
+      st.openLong = { entry: st.oscLower, target: st.oscUpper, ts: last.ts };
+    }
 
   } else if (osc && st.inOsc) {
+    // Check if price dipped to entry and filled
+    if (!st.openLong && last.close >= st.oscLower) {
+      // Re-arm — price back above entry, ready for next dip
+      st.openLong = { entry: st.oscLower, target: st.oscUpper, ts: last.ts };
+    }
+
     if (st.openLong) {
-      // Check TP and SL across recent candles high/low
       const recentHigh = Math.max(...raw.slice(-3).map(c => c.high));
       const recentLow  = Math.min(...raw.slice(-3).map(c => c.low));
-      if (recentHigh >= st.openLong.target) {
+
+      // Only count as filled if price actually touched entry level
+      const wasFilled = recentLow <= st.openLong.entry;
+
+      if (wasFilled && recentHigh >= st.openLong.target) {
+        // Full round trip — dipped to entry AND bounced to target
         closeTrade(sym, st.openLong.target, 'TP');
         st.action = 'SAME_TRADE';
-        enterTrade(sym, st.oscUpper, st.oscLower, last.ts);
-      } else if (recentLow <= st.oscLower - 2 * st.tick) {
+        // Re-arm for next bounce if price still above entry
+        if (last.close >= st.oscLower) {
+          st.openLong = { entry: st.oscLower, target: st.oscUpper, ts: last.ts };
+        }
+      } else if (wasFilled && recentLow <= st.oscLower - 2 * st.tick) {
+        // Filled then hit SL
         closeTrade(sym, st.oscLower - 2 * st.tick, 'SL');
         st.action = 'NO_TRADE';
       }
@@ -302,7 +320,10 @@ async function processSym(sym) {
   } else if (!osc && st.inOsc) {
     st.inOsc = false;
     st.action = 'NO_TRADE';
-    if (st.openLong) closeTrade(sym, last.close, 'BREAK');
+    if (st.openLong) {
+      // Close at market on breakout only if was filled
+      closeTrade(sym, last.close, 'BREAK');
+    }
   }
 }
 
