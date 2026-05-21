@@ -296,7 +296,7 @@ function inBlackout() { return BLACKOUT_H.includes(estHour()); }
 
 async function fetchCandles(limit) {
   try {
-    const url = '/proxy/mexc/kline?symbol=SNXUSDT&interval=Min1&limit=' + limit;
+    const url = '/proxy/mexc/kline?symbol=SNXUSDT&interval=Min5&limit=' + limit;
     const r   = await fetch(url);
     const d   = await r.json();
     if (!d.success) return [];
