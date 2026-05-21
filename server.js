@@ -15,7 +15,8 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.get('/proxy/mexc/kline', async (req, res) => {
   try {
     const { symbol, interval, limit } = req.query;
-    const response = await axios.get('https://api.mexc.com/api/v1/contract/kline/SNX_USDT', {
+    const symFormatted = (symbol || 'SNX_USDT').replace('USDT', '_USDT');
+    const response = await axios.get('https://api.mexc.com/api/v1/contract/kline/' + symFormatted, {
       params: { interval, limit },
       timeout: 10000,
       headers: HEADERS
@@ -29,8 +30,9 @@ app.get('/proxy/mexc/kline', async (req, res) => {
 app.get('/proxy/mexc/ticker', async (req, res) => {
   try {
     const { symbol } = req.query;
+    const symFormatted = (symbol || 'SNX_USDT').replace('USDT', '_USDT');
     const response = await axios.get('https://api.mexc.com/api/v1/contract/ticker', {
-      params: { symbol },
+      params: { symbol: symFormatted },
       timeout: 10000,
       headers: HEADERS
     });
