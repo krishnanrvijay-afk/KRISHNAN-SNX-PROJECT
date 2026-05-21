@@ -1,0 +1,853 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>SNX Tick Scalper</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Bebas+Neue&display=swap');
+
+  :root {
+    --bg:      #05080a;
+    --surface: #0a0f12;
+    --card:    #0f1518;
+    --border:  #162028;
+    --green:   #00ff88;
+    --red:     #ff3355;
+    --yellow:  #ffcc00;
+    --blue:    #00aaff;
+    --muted:   #3a5060;
+    --text:    #b0c8d8;
+    --white:   #e8f4ff;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Space Mono', monospace;
+    font-size: 12px;
+    min-height: 100vh;
+    padding: 10px;
+  }
+
+  /* ── HEADER ── */
+  .hdr {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 10px;
+  }
+  .hdr-title {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 26px;
+    letter-spacing: 2px;
+    color: var(--white);
+  }
+  .hdr-title em { color: var(--yellow); font-style: normal; }
+  .hdr-right { text-align: right; }
+  .hdr-clock { color: var(--yellow); font-size: 12px; font-weight: 700; }
+  .hdr-sub { color: var(--muted); font-size: 10px; margin-top: 2px; }
+
+  .dot {
+    display: inline-block;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    margin-right: 5px;
+    animation: blink 1.5s ease-in-out infinite;
+  }
+  .dot.green { background: var(--green); }
+  .dot.red   { background: var(--red); }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
+
+  /* ── PRICE ROW ── */
+  .price-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .pcard {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 10px;
+  }
+  .pcard-label { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+  .pcard-value { font-size: 15px; font-weight: 700; color: var(--white); }
+  .pcard-sub   { font-size: 10px; color: var(--muted); margin-top: 3px; }
+
+  /* ── SIGNAL CARD ── */
+  .signal-wrap {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .sig-card {
+    border-radius: 5px;
+    padding: 14px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    position: relative;
+    overflow: hidden;
+  }
+  .sig-card.long-active  { border-color: var(--green); background: rgba(0,255,136,0.04); }
+  .sig-card.short-active { border-color: var(--red);   background: rgba(255,51,85,0.04); }
+  .sig-card.waiting      { border-color: var(--border); opacity: 0.6; }
+
+  .sig-type {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 22px;
+    letter-spacing: 2px;
+    margin-bottom: 8px;
+  }
+  .sig-type.long  { color: var(--green); }
+  .sig-type.short { color: var(--red); }
+  .sig-type.wait  { color: var(--muted); }
+
+  .sig-row { display: flex; justify-content: space-between; margin-bottom: 4px; }
+  .sig-lbl { color: var(--muted); font-size: 10px; }
+  .sig-val { font-size: 11px; font-weight: 700; }
+
+  .sig-proj {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .sig-proj-label { font-size: 9px; color: var(--muted); text-transform: uppercase; }
+  .sig-proj-value { font-size: 14px; font-weight: 700; }
+
+  /* ── CANDLE STRIP ── */
+  .candle-section {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 10px;
+    margin-bottom: 10px;
+  }
+  .candle-header {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+  .candle-title { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+  .candle-strip {
+    display: flex;
+    align-items: flex-end;
+    gap: 3px;
+    height: 50px;
+  }
+  .candle-bar {
+    flex: 1;
+    border-radius: 2px 2px 0 0;
+    min-height: 4px;
+    transition: height 0.3s ease;
+    position: relative;
+  }
+  .candle-bar.bull { background: var(--green); opacity: 0.7; }
+  .candle-bar.bear { background: var(--red);   opacity: 0.7; }
+  .candle-bar.doji { background: var(--yellow); opacity: 0.7; }
+  .candle-bar.last { opacity: 1; outline: 1px solid var(--yellow); }
+
+  /* ── TICK LADDER ── */
+  .ladder-section {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 10px;
+    margin-bottom: 10px;
+  }
+  .ladder-title { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+  .ladder-row {
+    display: flex;
+    align-items: center;
+    padding: 5px 0;
+    border-bottom: 1px solid var(--border);
+    gap: 8px;
+  }
+  .ladder-row:last-child { border-bottom: none; }
+  .ladder-price { font-size: 13px; font-weight: 700; min-width: 60px; }
+  .ladder-tag {
+    font-size: 9px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .tag-tp-long  { background: rgba(0,255,136,0.15); color: var(--green); border: 1px solid rgba(0,255,136,0.3); }
+  .tag-entry    { background: rgba(255,204,0,0.15);  color: var(--yellow); border: 1px solid rgba(255,204,0,0.3); }
+  .tag-sl       { background: rgba(255,51,85,0.15);  color: var(--red);    border: 1px solid rgba(255,51,85,0.3); }
+  .tag-tp-short { background: rgba(255,51,85,0.15);  color: var(--red);    border: 1px solid rgba(255,51,85,0.3); }
+  .tag-current  { background: rgba(0,170,255,0.15);  color: var(--blue);   border: 1px solid rgba(0,170,255,0.3); }
+  .ladder-arrow { color: var(--muted); font-size: 10px; flex: 1; text-align: right; }
+
+  /* ── STATS ROW ── */
+  .stats-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .stat-box {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 10px;
+    text-align: center;
+  }
+  .stat-label { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+  .stat-value { font-size: 16px; font-weight: 700; margin-top: 4px; color: var(--white); }
+
+  /* ── TRADE LOG ── */
+  .log-section {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 10px;
+    margin-bottom: 10px;
+  }
+  .log-header {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+  .log-title { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+  .log-net   { font-size: 11px; font-weight: 700; }
+
+  .log-row {
+    display: grid;
+    grid-template-columns: 36px 44px 1fr 1fr 70px 36px;
+    gap: 4px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 10px;
+    align-items: center;
+    animation: slideIn 0.3s ease;
+  }
+  .log-row:last-child { border-bottom: none; }
+  @keyframes slideIn { from { opacity:0; transform:translateY(-6px); } to { opacity:1; transform:translateY(0); } }
+
+  .log-side {
+    font-size: 9px;
+    font-weight: 700;
+    padding: 2px 4px;
+    border-radius: 2px;
+    text-align: center;
+  }
+  .log-side.long  { background: rgba(0,255,136,0.15); color: var(--green); }
+  .log-side.short { background: rgba(255,51,85,0.15);  color: var(--red); }
+  .log-pnl { font-weight: 700; text-align: right; }
+  .log-time { color: var(--muted); text-align: right; }
+  .log-reason { font-size: 9px; color: var(--muted); }
+
+  /* ── ALERT ── */
+  .alert-section {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 10px;
+    margin-bottom: 10px;
+  }
+  .alert-row {
+    display: flex;
+    gap: 8px;
+    padding: 5px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 10px;
+    animation: slideIn 0.3s ease;
+  }
+  .alert-row:last-child { border-bottom: none; }
+  .alert-time { color: var(--muted); min-width: 38px; }
+
+  /* ── HOLD TIMER ── */
+  .hold-timer {
+    display: none;
+    background: rgba(255,204,0,0.08);
+    border: 1px solid rgba(255,204,0,0.3);
+    border-radius: 5px;
+    padding: 10px 14px;
+    margin-bottom: 10px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .hold-label { font-size: 10px; color: var(--yellow); text-transform: uppercase; letter-spacing: 1px; }
+  .hold-time  { font-family: 'Bebas Neue', sans-serif; font-size: 28px; color: var(--yellow); letter-spacing: 2px; }
+
+  /* ── FOOTER ── */
+  .footer {
+    text-align: center;
+    color: var(--muted);
+    font-size: 9px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+  }
+
+  .green  { color: var(--green) !important; }
+  .red    { color: var(--red) !important; }
+  .yellow { color: var(--yellow) !important; }
+  .blue   { color: var(--blue) !important; }
+  .white  { color: var(--white) !important; }
+
+  @media (max-width: 400px) {
+    .price-row { grid-template-columns: 1fr 1fr; }
+    .stats-row { grid-template-columns: 1fr 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="hdr">
+  <div>
+    <div class="hdr-title">SNX <em>TICK</em> SCALPER</div>
+    <div class="hdr-sub">1m · Bidirectional · Maker/Taker fee model</div>
+  </div>
+  <div class="hdr-right">
+    <div class="hdr-clock"><span class="dot green" id="liveDot"></span><span id="clock">--:--:-- EST</span></div>
+    <div class="hdr-sub" id="sessionLabel">--</div>
+  </div>
+</div>
+
+<!-- PRICE ROW -->
+<div class="price-row">
+  <div class="pcard">
+    <div class="pcard-label">Price</div>
+    <div class="pcard-value blue" id="lastPrice">-.----</div>
+    <div class="pcard-sub" id="priceChg">--</div>
+  </div>
+  <div class="pcard">
+    <div class="pcard-label">24h High</div>
+    <div class="pcard-value green" id="high24">-.----</div>
+    <div class="pcard-sub">resistance</div>
+  </div>
+  <div class="pcard">
+    <div class="pcard-label">24h Low</div>
+    <div class="pcard-value red" id="low24">-.----</div>
+    <div class="pcard-sub">support / SL ref</div>
+  </div>
+  <div class="pcard">
+    <div class="pcard-label">Tick</div>
+    <div class="pcard-value yellow" id="tickSize">-.-----</div>
+    <div class="pcard-sub" id="tickUsdt">USDT</div>
+  </div>
+</div>
+
+<!-- SIGNAL CARDS -->
+<div class="signal-wrap">
+  <div class="sig-card waiting" id="longCard">
+    <div class="sig-type long">LONG</div>
+    <div class="sig-row"><span class="sig-lbl">Entry</span><span class="sig-val green" id="longEntry">--</span></div>
+    <div class="sig-row"><span class="sig-lbl">TP +1 tick</span><span class="sig-val green" id="longTP">--</span></div>
+    <div class="sig-row"><span class="sig-lbl">SL -2 ticks</span><span class="sig-val red" id="longSL">--</span></div>
+    <div class="sig-proj">
+      <span class="sig-proj-label">Proj net (win)</span>
+      <span class="sig-proj-value green" id="longProj">--</span>
+    </div>
+  </div>
+  <div class="sig-card waiting" id="shortCard">
+    <div class="sig-type short">SHORT</div>
+    <div class="sig-row"><span class="sig-lbl">Entry</span><span class="sig-val red" id="shortEntry">--</span></div>
+    <div class="sig-row"><span class="sig-lbl">TP -1 tick</span><span class="sig-val green" id="shortTP">--</span></div>
+    <div class="sig-row"><span class="sig-lbl">SL +2 ticks</span><span class="sig-val red" id="shortSL">--</span></div>
+    <div class="sig-proj">
+      <span class="sig-proj-label">Proj net (win)</span>
+      <span class="sig-proj-value green" id="shortProj">--</span>
+    </div>
+  </div>
+</div>
+
+<!-- HOLD TIMER -->
+<div class="hold-timer" id="holdTimer">
+  <div>
+    <div class="hold-label">Hold Time</div>
+    <div style="font-size:10px;color:var(--muted)" id="holdSide">--</div>
+  </div>
+  <div class="hold-time" id="holdTime">0:00</div>
+</div>
+
+<!-- TICK LADDER -->
+<div class="ladder-section">
+  <div class="ladder-title">Tick Ladder — Current Setup</div>
+  <div id="ladderRows">
+    <div class="ladder-row"><span class="ladder-price muted">--</span><span class="ladder-tag tag-entry">waiting</span></div>
+  </div>
+</div>
+
+<!-- CANDLE STRIP -->
+<div class="candle-section">
+  <div class="candle-header">
+    <div class="candle-title">Last 20 Candles (1m)</div>
+    <div style="font-size:9px;color:var(--muted)" id="candleRange">--</div>
+  </div>
+  <div class="candle-strip" id="candleStrip"></div>
+</div>
+
+<!-- STATS ROW -->
+<div class="stats-row">
+  <div class="stat-box">
+    <div class="stat-label">Session P&L</div>
+    <div class="stat-value" id="sessionPnl">$0</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">Win Rate</div>
+    <div class="stat-value" id="winRate">--</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">Trades</div>
+    <div class="stat-value" id="tradeCount">0</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">Signals</div>
+    <div class="stat-value" id="signalCount">0</div>
+  </div>
+</div>
+
+<!-- TRADE LOG -->
+<div class="log-section">
+  <div class="log-header">
+    <div class="log-title">Paper Trade Log</div>
+    <div class="log-net" id="totalNet">Net: $0.00</div>
+  </div>
+  <div id="logRows">
+    <div style="color:var(--muted);font-size:10px;padding:6px 0">Waiting for first tick signal...</div>
+  </div>
+</div>
+
+<!-- ALERT FEED -->
+<div class="alert-section">
+  <div class="log-header">
+    <div class="log-title">Alert Feed</div>
+    <div style="font-size:10px;color:var(--muted)" id="alertCount">0</div>
+  </div>
+  <div id="alertRows">
+    <div class="alert-row"><span class="alert-time">--:--</span><span style="color:var(--muted)">System starting...</span></div>
+  </div>
+</div>
+
+<div class="footer">
+  SNXUSDT · 1m · $1,400 margin · 100x · $140,000 notional · maker entry+TP / taker SL · paper mode
+</div>
+
+<script>
+// ── CONFIG ────────────────────────────────────────────────────────────────────
+const NOTIONAL   = 140000;
+const TAKER_FEE  = 0.0002;
+const MAKER_FEE  = 0;
+const POLL_MS    = 10000;       // 10s — faster for 1m candles
+const CANDLES    = 30;          // fetch last 30 x 1m candles
+const TP_TICKS   = 1;
+const SL_TICKS   = 2;
+const BOUNCE_LOOKBACK = 5;      // candles to detect bounce
+
+// ── STATE ─────────────────────────────────────────────────────────────────────
+let candles      = [];
+let tick         = 0.0001;
+let high24       = 0;
+let low24        = 0;
+let trades       = JSON.parse(localStorage.getItem('snx_tick_trades') || '[]');
+let openTrade    = null;
+let alerts       = [];
+let signals      = 0;
+let sessionStart = Date.now();
+let holdInterval = null;
+
+// ── TIME ──────────────────────────────────────────────────────────────────────
+function nowEST() { return new Date(Date.now() - 5 * 3600000); }
+function estHour() { return nowEST().getUTCHours(); }
+function fmtTime(ms) {
+  const d = new Date(ms - 5 * 3600000);
+  return d.toISOString().slice(11,16);
+}
+function sessionName(h) {
+  if (h >= 0  && h < 3)  return 'Asia';
+  if (h >= 3  && h < 9)  return 'London';
+  if (h >= 9  && h < 11) return 'NY Open ⚠';
+  if (h >= 11 && h < 21) return 'NY Session';
+  return 'Late';
+}
+
+// ── FETCH ─────────────────────────────────────────────────────────────────────
+async function fetchCandles(limit) {
+  try {
+    const r = await fetch('/proxy/mexc/kline?symbol=SNXUSDT&interval=Min1&limit=' + limit);
+    const d = await r.json();
+    if (!d.success) return [];
+    const raw = d.data;
+    const out = [];
+    for (let i = 0; i < raw.time.length; i++) {
+      out.push({
+        ts:    raw.time[i] * 1000,
+        open:  +raw.open[i],
+        high:  +raw.high[i],
+        low:   +raw.low[i],
+        close: +raw.close[i]
+      });
+    }
+    return out.sort((a,b) => a.ts - b.ts);
+  } catch(e) {
+    addAlert('ERR', e.message, 'red');
+    return [];
+  }
+}
+
+// ── TICK ──────────────────────────────────────────────────────────────────────
+function inferTick(c) {
+  const diffs = [];
+  for (let i = 1; i < c.length; i++) {
+    const d = Math.abs(c[i].close - c[i-1].close);
+    if (d > 0) diffs.push(+d.toFixed(6));
+  }
+  return diffs.length ? Math.min(...diffs) : 0.0001;
+}
+
+// ── P&L ──────────────────────────────────────────────────────────────────────
+function projWin(entryPrice) {
+  // 1 tick move, maker entry + maker TP = $0 fees
+  return NOTIONAL * tick / entryPrice;
+}
+function projLoss(entryPrice) {
+  // SL hit = taker fee on close only
+  const slMove = SL_TICKS * tick;
+  return -(NOTIONAL * slMove / entryPrice) - (TAKER_FEE * NOTIONAL);
+}
+function fmtPnl(v) {
+  return (v >= 0 ? '+' : '') + '$' + Math.abs(v).toFixed(2);
+}
+
+// ── BOUNCE DETECTION ─────────────────────────────────────────────────────────
+function detectSignal(c) {
+  if (c.length < BOUNCE_LOOKBACK + 1) return null;
+  const recent  = c.slice(-BOUNCE_LOOKBACK);
+  const last    = c[c.length - 1];
+  const prev    = c[c.length - 2];
+
+  const recentH = Math.max(...recent.map(x => x.high));
+  const recentL = Math.min(...recent.map(x => x.low));
+  const range   = recentH - recentL;
+
+  // Only signal in tight range (max 4 ticks)
+  if (range > 4 * tick) return null;
+
+  const price = last.close;
+
+  // Long signal: price near recent low and last candle is bullish
+  const nearLow  = Math.abs(price - recentL) <= tick;
+  const bullCandle = last.close > last.open;
+
+  // Short signal: price near recent high and last candle is bearish
+  const nearHigh   = Math.abs(price - recentH) <= tick;
+  const bearCandle = last.close < last.open;
+
+  if (nearLow && bullCandle && prev.close < prev.open) {
+    return { side: 'LONG',  entry: recentL, range: range };
+  }
+  if (nearHigh && bearCandle && prev.close > prev.open) {
+    return { side: 'SHORT', entry: recentH, range: range };
+  }
+  return null;
+}
+
+// ── PAPER TRADE ───────────────────────────────────────────────────────────────
+function enterTrade(signal) {
+  if (openTrade) return;  // already in a trade
+  const { side, entry } = signal;
+  const tp = side === 'LONG'
+    ? +(entry + TP_TICKS * tick).toFixed(6)
+    : +(entry - TP_TICKS * tick).toFixed(6);
+  const sl = side === 'LONG'
+    ? +(entry - SL_TICKS * tick).toFixed(6)
+    : +(entry + SL_TICKS * tick).toFixed(6);
+
+  openTrade = { side, entry, tp, sl, ts: Date.now() };
+  signals++;
+  startHoldTimer();
+  addAlert('▶', side + ' @' + entry.toFixed(4) + '  TP:' + tp.toFixed(4) + '  SL:' + sl.toFixed(4), side === 'LONG' ? 'green' : 'red');
+}
+
+function checkExit(price) {
+  if (!openTrade) return;
+  const { side, entry, tp, sl, ts } = openTrade;
+  let closed = false;
+  let reason = '';
+  let exitPrice = price;
+  let net = 0;
+
+  if (side === 'LONG' && price >= tp) {
+    exitPrice = tp;
+    net = NOTIONAL * (tp - entry) / entry;  // maker TP, no fee
+    reason = 'TP';
+    closed = true;
+  } else if (side === 'SHORT' && price <= tp) {
+    exitPrice = tp;
+    net = NOTIONAL * (entry - tp) / entry;  // maker TP, no fee
+    reason = 'TP';
+    closed = true;
+  } else if (side === 'LONG' && price <= sl) {
+    exitPrice = sl;
+    net = -(NOTIONAL * (entry - sl) / entry) - (TAKER_FEE * NOTIONAL);
+    reason = 'SL';
+    closed = true;
+  } else if (side === 'SHORT' && price >= sl) {
+    exitPrice = sl;
+    net = -(NOTIONAL * (sl - entry) / entry) - (TAKER_FEE * NOTIONAL);
+    reason = 'SL';
+    closed = true;
+  }
+
+  // Auto-close after 3 minutes at market
+  if (!closed && Date.now() - ts > 180000) {
+    net = side === 'LONG'
+      ? NOTIONAL * (price - entry) / entry - TAKER_FEE * NOTIONAL
+      : NOTIONAL * (entry - price) / entry - TAKER_FEE * NOTIONAL;
+    reason = 'TIME';
+    closed = true;
+  }
+
+  if (closed) {
+    const trade = {
+      side, entry, exit: exitPrice, tp, sl,
+      ts, tsClose: Date.now(),
+      net: +net.toFixed(2),
+      outcome: net > 0 ? 'WIN' : 'LOSS',
+      reason
+    };
+    trades.push(trade);
+    localStorage.setItem('snx_tick_trades', JSON.stringify(trades));
+    openTrade = null;
+    stopHoldTimer();
+    const icon = net > 0 ? 'WIN' : 'LOSS';
+    addAlert(icon, side + ' ' + reason + ' @' + exitPrice.toFixed(4) + ' ' + fmtPnl(net), net > 0 ? 'green' : 'red');
+    renderLog();
+    renderStats();
+  }
+}
+
+// ── HOLD TIMER ────────────────────────────────────────────────────────────────
+function startHoldTimer() {
+  const el = document.getElementById('holdTimer');
+  el.style.display = 'flex';
+  holdInterval = setInterval(() => {
+    if (!openTrade) return;
+    const secs = Math.floor((Date.now() - openTrade.ts) / 1000);
+    const m = Math.floor(secs / 60);
+    const s = String(secs % 60).padStart(2, '0');
+    document.getElementById('holdTime').textContent = m + ':' + s;
+    document.getElementById('holdSide').textContent = openTrade.side + ' @' + openTrade.entry.toFixed(4);
+    // Turn red after 2.5 minutes
+    document.getElementById('holdTime').style.color = secs > 150 ? 'var(--red)' : 'var(--yellow)';
+  }, 1000);
+}
+function stopHoldTimer() {
+  clearInterval(holdInterval);
+  document.getElementById('holdTimer').style.display = 'none';
+}
+
+// ── RENDER ────────────────────────────────────────────────────────────────────
+function renderClock() {
+  const t = nowEST();
+  const h = String(t.getUTCHours()).padStart(2,'0');
+  const m = String(t.getUTCMinutes()).padStart(2,'0');
+  const s = String(t.getUTCSeconds()).padStart(2,'0');
+  document.getElementById('clock').textContent = h+':'+m+':'+s+' EST';
+  document.getElementById('sessionLabel').textContent = sessionName(+h);
+}
+
+function renderPrices(last, chg) {
+  document.getElementById('lastPrice').textContent = last.toFixed(4);
+  document.getElementById('priceChg').textContent  = (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%';
+  document.getElementById('priceChg').style.color  = chg >= 0 ? 'var(--green)' : 'var(--red)';
+  document.getElementById('high24').textContent    = high24.toFixed(4);
+  document.getElementById('low24').textContent     = low24.toFixed(4);
+  document.getElementById('tickSize').textContent  = tick.toFixed(5);
+}
+
+function renderSignals(price) {
+  const longEntry  = +(price - tick).toFixed(6);
+  const longTP     = +(longEntry + TP_TICKS * tick).toFixed(6);
+  const longSL     = +(longEntry - SL_TICKS * tick).toFixed(6);
+  const shortEntry = +(price + tick).toFixed(6);
+  const shortTP    = +(shortEntry - TP_TICKS * tick).toFixed(6);
+  const shortSL    = +(shortEntry + SL_TICKS * tick).toFixed(6);
+
+  document.getElementById('longEntry').textContent  = longEntry.toFixed(4);
+  document.getElementById('longTP').textContent     = longTP.toFixed(4);
+  document.getElementById('longSL').textContent     = longSL.toFixed(4);
+  document.getElementById('longProj').textContent   = fmtPnl(projWin(longEntry));
+  document.getElementById('shortEntry').textContent = shortEntry.toFixed(4);
+  document.getElementById('shortTP').textContent    = shortTP.toFixed(4);
+  document.getElementById('shortSL').textContent    = shortSL.toFixed(4);
+  document.getElementById('shortProj').textContent  = fmtPnl(projWin(shortEntry));
+
+  // Highlight active signal
+  const lc = document.getElementById('longCard');
+  const sc = document.getElementById('shortCard');
+  if (openTrade && openTrade.side === 'LONG') {
+    lc.className = 'sig-card long-active';
+    sc.className = 'sig-card waiting';
+  } else if (openTrade && openTrade.side === 'SHORT') {
+    lc.className = 'sig-card waiting';
+    sc.className = 'sig-card short-active';
+  } else {
+    lc.className = 'sig-card';
+    sc.className = 'sig-card';
+  }
+}
+
+function renderLadder(price) {
+  const rows = [];
+  // Show 3 ticks above and below current price
+  for (let i = 3; i >= -3; i--) {
+    const p = +(price + i * tick).toFixed(6);
+    let tag = '';
+    let tagClass = '';
+
+    if (openTrade) {
+      if (Math.abs(p - openTrade.tp) < tick * 0.1) { tag = 'TP'; tagClass = openTrade.side === 'LONG' ? 'tag-tp-long' : 'tag-tp-short'; }
+      else if (Math.abs(p - openTrade.entry) < tick * 0.1) { tag = 'ENTRY'; tagClass = 'tag-entry'; }
+      else if (Math.abs(p - openTrade.sl) < tick * 0.1)    { tag = 'SL';    tagClass = 'tag-sl'; }
+    }
+    if (Math.abs(p - price) < tick * 0.1) { tag = 'NOW'; tagClass = 'tag-current'; }
+
+    const arrow = i > 0 ? '▲' : i < 0 ? '▼' : '●';
+    const col   = i > 0 ? 'green' : i < 0 ? 'red' : 'blue';
+    rows.push(
+      '<div class="ladder-row">' +
+      '<span class="ladder-price ' + col + '">' + p.toFixed(4) + '</span>' +
+      (tag ? '<span class="ladder-tag ' + tagClass + '">' + tag + '</span>' : '') +
+      '<span class="ladder-arrow ' + col + '">' + arrow + '</span>' +
+      '</div>'
+    );
+  }
+  document.getElementById('ladderRows').innerHTML = rows.join('');
+}
+
+function renderCandles(c) {
+  const strip = document.getElementById('candleStrip');
+  const last20 = c.slice(-20);
+  if (!last20.length) return;
+
+  const maxH = Math.max(...last20.map(x => x.high));
+  const minL = Math.min(...last20.map(x => x.low));
+  const range = maxH - minL || 0.001;
+
+  strip.innerHTML = last20.map((x, i) => {
+    const pct  = Math.max(4, ((x.high - x.low) / range) * 100);
+    const bull = x.close >= x.open;
+    const cls  = bull ? 'bull' : 'bear';
+    const last = i === last20.length - 1 ? ' last' : '';
+    return '<div class="candle-bar ' + cls + last + '" style="height:' + pct + '%"></div>';
+  }).join('');
+
+  const first = last20[0];
+  const last  = last20[last20.length - 1];
+  document.getElementById('candleRange').textContent =
+    fmtTime(first.ts) + ' → ' + fmtTime(last.ts) + ' EST';
+}
+
+function renderLog() {
+  const rows    = [...trades].reverse().slice(0, 12);
+  const totalNet = trades.reduce((s,t) => s + t.net, 0);
+  const el = document.getElementById('totalNet');
+  el.textContent = 'Net: ' + fmtPnl(totalNet);
+  el.style.color = totalNet >= 0 ? 'var(--green)' : 'var(--red)';
+
+  if (!rows.length) {
+    document.getElementById('logRows').innerHTML =
+      '<div style="color:var(--muted);font-size:10px;padding:6px 0">Waiting for first tick signal...</div>';
+    return;
+  }
+
+  document.getElementById('logRows').innerHTML = rows.map(t => {
+    const cls = t.net >= 0 ? 'green' : 'red';
+    return '<div class="log-row">' +
+      '<span class="log-side ' + t.side.toLowerCase() + '">' + t.side.slice(0,1) + '</span>' +
+      '<span class="log-reason ' + (t.reason === 'TP' ? 'green' : t.reason === 'SL' ? 'red' : 'yellow') + '">' + t.reason + '</span>' +
+      '<span>' + t.entry.toFixed(4) + '</span>' +
+      '<span>' + t.exit.toFixed(4) + '</span>' +
+      '<span class="log-pnl ' + cls + '">' + fmtPnl(t.net) + '</span>' +
+      '<span class="log-time">' + fmtTime(t.ts) + '</span>' +
+      '</div>';
+  }).join('');
+}
+
+function renderStats() {
+  const sessionTrades = trades.filter(t => t.ts >= sessionStart);
+  const net  = sessionTrades.reduce((s,t) => s + t.net, 0);
+  const wins = sessionTrades.filter(t => t.outcome === 'WIN').length;
+  const tot  = sessionTrades.length;
+  const wr   = tot ? Math.round(wins / tot * 100) : 0;
+
+  const el = document.getElementById('sessionPnl');
+  el.textContent = fmtPnl(net);
+  el.style.color = net >= 0 ? 'var(--green)' : 'var(--red)';
+  document.getElementById('winRate').textContent   = tot ? wr + '%' : '--';
+  document.getElementById('tradeCount').textContent = tot;
+  document.getElementById('signalCount').textContent = signals;
+}
+
+function addAlert(icon, msg, color) {
+  alerts.unshift({ icon, msg, color, time: fmtTime(Date.now()) });
+  if (alerts.length > 15) alerts.pop();
+  document.getElementById('alertRows').innerHTML = alerts.slice(0, 6).map(a =>
+    '<div class="alert-row">' +
+    '<span class="alert-time">' + a.time + '</span>' +
+    '<span class="' + a.color + '">' + a.icon + ' ' + a.msg + '</span>' +
+    '</div>'
+  ).join('');
+  document.getElementById('alertCount').textContent = alerts.length;
+}
+
+// ── MAIN POLL ─────────────────────────────────────────────────────────────────
+async function poll() {
+  const raw = await fetchCandles(CANDLES);
+  if (!raw.length) return;
+
+  candles = raw;
+  tick    = inferTick(candles);
+
+  const last      = candles[candles.length - 1];
+  const first     = candles[0];
+  const price     = last.close;
+  const pctChg    = (price - first.open) / first.open * 100;
+
+  high24 = Math.max(...candles.map(c => c.high));
+  low24  = Math.min(...candles.map(c => c.low));
+
+  renderPrices(price, pctChg);
+  renderSignals(price);
+  renderLadder(price);
+  renderCandles(candles);
+
+  // Check exit first
+  if (openTrade) checkExit(price);
+
+  // Detect new signal only if not in a trade
+  if (!openTrade) {
+    const sig = detectSignal(candles);
+    if (sig) {
+      enterTrade(sig);
+      renderStats();
+    }
+  }
+}
+
+// ── INIT ──────────────────────────────────────────────────────────────────────
+setInterval(renderClock, 1000);
+renderClock();
+renderLog();
+renderStats();
+addAlert('GO', 'SNX Tick Scalper started · 1m · bidirectional', 'green');
+poll();
+setInterval(poll, POLL_MS);
+</script>
+</body>
+</html>
