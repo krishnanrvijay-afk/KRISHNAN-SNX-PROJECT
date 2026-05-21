@@ -193,8 +193,11 @@ function pnlForRange(upper, lower) {
 function enterTrade(sym, upper, lower, ts) {
   if (inBlackout()) return;
   const st = state[sym];
-  st.openLong  = { side:'LONG',  entry:lower, target:upper, ts };
-  st.openShort = { side:'SHORT', entry:upper, target:lower, ts };
+  const price = st.lastPrice;
+  // Only enter LONG — buy at lower band, sell at upper band
+  // This matches the maker limit order model
+  st.openLong  = { side:'LONG', entry:lower, target:upper, ts };
+  st.openShort = null;  // shorts disabled for now
 }
 
 function closeTrade(sym, exitPrice, reason) {
