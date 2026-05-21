@@ -677,28 +677,41 @@ function renderSignals(price) {
   const shortEntry = +(price + tick).toFixed(6);
   const shortTP    = +(shortEntry - TP_TICKS * tick).toFixed(6);
   const shortSL    = +(shortEntry + SL_TICKS * tick).toFixed(6);
-
-  document.getElementById('longEntry').textContent  = longEntry.toFixed(4);
-  document.getElementById('longTP').textContent     = longTP.toFixed(4);
-  document.getElementById('longSL').textContent     = longSL.toFixed(4);
-  document.getElementById('longProj').textContent   = fmtPnl(projWin(longEntry));
-  document.getElementById('shortEntry').textContent = shortEntry.toFixed(4);
-  document.getElementById('shortTP').textContent    = shortTP.toFixed(4);
-  document.getElementById('shortSL').textContent    = shortSL.toFixed(4);
-  document.getElementById('shortProj').textContent  = fmtPnl(projWin(shortEntry));
-
-  // Highlight active signal
   const lc = document.getElementById('longCard');
   const sc = document.getElementById('shortCard');
-  if (openTrade && openTrade.side === 'LONG') {
-    lc.className = 'sig-card long-active';
-    sc.className = 'sig-card waiting';
-  } else if (openTrade && openTrade.side === 'SHORT') {
-    lc.className = 'sig-card waiting';
-    sc.className = 'sig-card short-active';
-  } else {
+  if (!openTrade) {
+    document.getElementById('longEntry').textContent  = longEntry.toFixed(4);
+    document.getElementById('longTP').textContent     = longTP.toFixed(4);
+    document.getElementById('longSL').textContent     = longSL.toFixed(4);
+    document.getElementById('longProj').textContent   = fmtPnl(projWin(longEntry));
+    document.getElementById('shortEntry').textContent = shortEntry.toFixed(4);
+    document.getElementById('shortTP').textContent    = shortTP.toFixed(4);
+    document.getElementById('shortSL').textContent    = shortSL.toFixed(4);
+    document.getElementById('shortProj').textContent  = fmtPnl(projWin(shortEntry));
     lc.className = 'sig-card';
     sc.className = 'sig-card';
+  } else if (openTrade.side === 'LONG') {
+    document.getElementById('longEntry').textContent  = openTrade.entry.toFixed(4);
+    document.getElementById('longTP').textContent     = openTrade.tp.toFixed(4);
+    document.getElementById('longSL').textContent     = openTrade.sl.toFixed(4);
+    document.getElementById('longProj').textContent   = fmtPnl(projWin(openTrade.entry));
+    document.getElementById('shortEntry').textContent = shortEntry.toFixed(4);
+    document.getElementById('shortTP').textContent    = shortTP.toFixed(4);
+    document.getElementById('shortSL').textContent    = shortSL.toFixed(4);
+    document.getElementById('shortProj').textContent  = fmtPnl(projWin(shortEntry));
+    lc.className = 'sig-card long-active';
+    sc.className = 'sig-card waiting';
+  } else {
+    document.getElementById('shortEntry').textContent = openTrade.entry.toFixed(4);
+    document.getElementById('shortTP').textContent    = openTrade.tp.toFixed(4);
+    document.getElementById('shortSL').textContent    = openTrade.sl.toFixed(4);
+    document.getElementById('shortProj').textContent  = fmtPnl(projWin(openTrade.entry));
+    document.getElementById('longEntry').textContent  = longEntry.toFixed(4);
+    document.getElementById('longTP').textContent     = longTP.toFixed(4);
+    document.getElementById('longSL').textContent     = longSL.toFixed(4);
+    document.getElementById('longProj').textContent   = fmtPnl(projWin(longEntry));
+    lc.className = 'sig-card waiting';
+    sc.className = 'sig-card short-active';
   }
 }
 
