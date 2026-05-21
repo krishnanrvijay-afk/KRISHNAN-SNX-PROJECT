@@ -148,6 +148,7 @@ SYMBOLS.forEach(s => {
   state[s] = {
     candles: [], tick: 0.0001,
     inOsc: false, oscUpper: 0, oscLower: 0, oscCount: 0,
+    prevOscUpper: 0, prevOscLower: 0, action: 'WAIT',
     openLong: null,
     trades: JSON.parse(localStorage.getItem('mt2_' + s) || '[]'),
     sessionStart: todayStartEST(),
@@ -262,25 +263,32 @@ async function processSym(sym) {
   const osc = detectOsc(raw, st.tick);
 
   if (osc && !st.inOsc) {
-    st.inOsc    = true;
-    st.oscUpper = osc.upper;
-    st.oscLower = osc.lower;
+    // New oscillation detected
+    const isNewBand = st.prevOscLower !== osc.lower || st.prevOscUpper !== osc.upper;
+    st.inOsc       = true;
+    st.prevOscLower = st.oscLower;
+    st.prevOscUpper = st.oscUpper;
+    st.oscUpper    = osc.upper;
+    st.oscLower    = osc.lower;
     st.oscCount++;
+    st.action      = isNewBand && st.prevOscLower > 0 ? 'NEW_SETUP' : 'ARMED';
     enterTrade(sym, osc.upper, osc.lower, last.ts);
 
   } else if (osc && st.inOsc) {
-    // Check exit using candle high/low
     if (st.openLong) {
       if (last.high >= st.openLong.target) {
         closeTrade(sym, st.openLong.target, 'TP');
-        enterTrade(sym, st.oscUpper, st.oscLower, last.ts); // re-enter
+        st.action = 'SAME_TRADE';
+        enterTrade(sym, st.oscUpper, st.oscLower, last.ts);
       } else if (last.low <= st.oscLower - 2 * st.tick) {
         closeTrade(sym, st.oscLower - 2 * st.tick, 'SL');
+        st.action = 'NO_TRADE';
       }
     }
 
   } else if (!osc && st.inOsc) {
     st.inOsc = false;
+    st.action = 'NO_TRADE';
     if (st.openLong) closeTrade(sym, last.close, 'BREAK');
   }
 }
@@ -361,6 +369,34 @@ function renderTicker(sym) {
   // Trade setup for manual execution
   const setup  = getSetup(price, st.tick);
   const isArmed = st.inOsc;
+  // Action badge
+  let actionHtml = '';
+  if (inBlackout()) {
+    actionHtml = '<div style="margin-bottom:10px;padding:8px 12px;border-radius:5px;background:rgba(255,68,68,0.1);border:1px solid rgba(255,68,68,0.3);display:flex;justify-content:space-between;align-items:center">' +
+      '<span style="color:var(--red);font-weight:700;font-size:12px">🔴 NO TRADE — NY OPEN BLACKOUT</span>' +
+      '<span style="color:var(--muted);font-size:10px">Resume 11:00 EST</span>' +
+      '</div>';
+  } else if (st.action === 'SAME_TRADE' && st.inOsc) {
+    actionHtml = '<div style="margin-bottom:10px;padding:8px 12px;border-radius:5px;background:rgba(0,230,118,0.1);border:1px solid rgba(0,230,118,0.4);display:flex;justify-content:space-between;align-items:center">' +
+      '<span style="color:var(--green);font-weight:700;font-size:12px">🟢 SAME TRADE — Re-enter same levels</span>' +
+      '<span style="color:var(--muted);font-size:10px">E:' + fmtPrice(st.oscLower,st.tick) + ' TP:' + fmtPrice(st.oscUpper,st.tick) + '</span>' +
+      '</div>';
+  } else if (st.action === 'NEW_SETUP' && st.inOsc) {
+    actionHtml = '<div style="margin-bottom:10px;padding:8px 12px;border-radius:5px;background:rgba(0,212,255,0.1);border:1px solid rgba(0,212,255,0.4);display:flex;justify-content:space-between;align-items:center">' +
+      '<span style="color:var(--blue);font-weight:700;font-size:12px">🔵 NEW SETUP — Update your order</span>' +
+      '<span style="color:var(--muted);font-size:10px">E:' + fmtPrice(st.oscLower,st.tick) + ' TP:' + fmtPrice(st.oscUpper,st.tick) + '</span>' +
+      '</div>';
+  } else if (st.action === 'NO_TRADE' || !st.inOsc) {
+    actionHtml = '<div style="margin-bottom:10px;padding:8px 12px;border-radius:5px;background:rgba(255,68,68,0.08);border:1px solid rgba(255,68,68,0.2);display:flex;justify-content:space-between;align-items:center">' +
+      '<span style="color:var(--red);font-weight:700;font-size:12px">🔴 NO TRADE — Waiting for pattern</span>' +
+      '<span style="color:var(--muted);font-size:10px">FLAT</span>' +
+      '</div>';
+  } else if (st.action === 'ARMED' && st.inOsc) {
+    actionHtml = '<div style="margin-bottom:10px;padding:8px 12px;border-radius:5px;background:rgba(255,215,64,0.1);border:1px solid rgba(255,215,64,0.4);display:flex;justify-content:space-between;align-items:center">' +
+      '<span style="color:var(--yellow);font-weight:700;font-size:12px">⚡ ARMED — Place limit order now</span>' +
+      '<span style="color:var(--muted);font-size:10px">E:' + fmtPrice(st.oscLower,st.tick) + ' TP:' + fmtPrice(st.oscUpper,st.tick) + '</span>' +
+      '</div>';
+  }
   const setupHtml = '<div class="setup-box ' + (isArmed?'armed':'') + '">' +
     '<div class="setup-title"><span>MEXC LIMIT ORDER SETUP</span><span style="color:' + (isArmed?'var(--yellow)':'var(--muted)') + '">' + (isArmed?'⚡ ARMED':'WATCHING') + '</span></div>' +
     '<div class="setup-grid">' +
@@ -403,6 +439,7 @@ function renderTicker(sym) {
       '<div class="band-lbl-l">' + fmtPrice(lower,st.tick) + '</div>' +
       '<div class="band-lbl-p" style="top:' + pPct + '%">' + fmtPrice(price,st.tick) + '</div>' +
     '</div>' +
+    actionHtml +
     setupHtml +
     '<div class="log-section">' +
       '<div class="log-title"><span>Paper Trades — Today</span><span style="color:' + (net>=0?'var(--green)':'var(--red)') + '">' + fmtPnl(net) + '</span></div>' +
