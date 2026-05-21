@@ -458,12 +458,11 @@ let alerts       = [];
 let signals      = 0;
 let sessionStart = Date.now();
 let holdInterval = null;
-
-// Zone tracking — only reset setup when price moves outside ± 1 tick
-let zonePrice    = null;   // price when zone was last set
-let setupEntry   = null;   // locked entry
-let setupTP      = null;   // locked TP
-let setupSL      = null;   // locked SL
+let zonePrice    = null;
+let setupEntry   = null;
+let setupTP      = null;
+let setupSL      = null;
+let lastEntryPrice = null;  // price at which we entered — don't re-enter same zone
 
 // ── TIME ──────────────────────────────────────────────────────────────────────
 function nowEST() { return new Date(Date.now() - 5 * 3600000); }
@@ -515,53 +514,65 @@ function inferTick(c) {
   return diffs.length ? Math.min(...diffs) : 0.0001;
 }
 
-// ── SETUP LEVELS ──────────────────────────────────────────────────────────────
+// ── SETUP ─────────────────────────────────────────────────────────────────────
+// Current price is where we ARE. Entry is 1 tick below. TP is current price. SL is 2 ticks below entry.
+// Example: price=0.3156 → entry=0.3155, TP=0.3156, SL=0.3153
 function calcSetup(price) {
-  const entry = +(price - tick).toFixed(6);      // 1 tick below current
-  const tp    = +(price).toFixed(6);             // TP = current price (1 tick above entry)
-  const sl    = +(entry - SL_TICKS * tick).toFixed(6);  // SL = 2 ticks below entry
+  const entry = +(price - tick).toFixed(6);
+  const tp    = +(price).toFixed(6);
+  const sl    = +(entry - SL_TICKS * tick).toFixed(6);
   return { entry, tp, sl };
 }
 
+// ── ZONE UPDATE ───────────────────────────────────────────────────────────────
+// Only reset zone when price moves more than 1 tick from zone price
+// After reset, enter a new trade (if not already in one)
 function updateZone(price) {
-  // First time or price moved outside ± 1 tick of zone price — reset
-  if (zonePrice === null || Math.abs(price - zonePrice) > tick * 1.5) {
-    zonePrice = price;
-    const s   = calcSetup(price);
+  const isFirstTime  = zonePrice === null;
+  const movedOutside = zonePrice !== null && Math.abs(price - zonePrice) > tick * 1.5;
+
+  if (isFirstTime || movedOutside) {
+    zonePrice  = price;
+    const s    = calcSetup(price);
     setupEntry = s.entry;
     setupTP    = s.tp;
     setupSL    = s.sl;
-    addAlert('ZONE', 'Reset @ ' + price.toFixed(4) + '  E:' + setupEntry.toFixed(4) + ' TP:' + setupTP.toFixed(4) + ' SL:' + setupSL.toFixed(4), 'yellow');
-    enterTrade();
+    addAlert('ZONE', 'New zone @' + price.toFixed(4) + ' E:' + setupEntry.toFixed(4) + ' TP:' + setupTP.toFixed(4) + ' SL:' + setupSL.toFixed(4), 'yellow');
+    // Enter trade on new zone — but only if we didnt just enter at this same price
+    if (lastEntryPrice === null || Math.abs(price - lastEntryPrice) > tick * 0.5) {
+      openTrade = {
+        side:  'LONG',
+        entry: setupEntry,
+        tp:    setupTP,
+        sl:    setupSL,
+        ts:    Date.now(),
+        enteredAtPrice: price
+      };
+      lastEntryPrice = price;
+      signals++;
+      startHoldTimer();
+      addAlert('BUY', 'LONG entered E:' + setupEntry.toFixed(4) + ' TP:' + setupTP.toFixed(4) + ' SL:' + setupSL.toFixed(4), 'green');
+    }
   }
 }
 
 // ── P&L ──────────────────────────────────────────────────────────────────────
 function projWin(entry) {
-  return NOTIONAL * tick / entry;   // maker entry + maker TP = $0 fee
+  return NOTIONAL * tick / entry;
 }
 function fmtPnl(v) {
   return (v >= 0 ? '+' : '') + '$' + Math.abs(v).toFixed(2);
 }
 
-// ── PAPER TRADE ───────────────────────────────────────────────────────────────
-function enterTrade() {
-  if (openTrade || !setupEntry) return;
-  openTrade = {
-    side:  'LONG',
-    entry: setupEntry,
-    tp:    setupTP,
-    sl:    setupSL,
-    ts:    Date.now()
-  };
-  signals++;
-  startHoldTimer();
-  addAlert('BUY', 'LONG @' + setupEntry.toFixed(4) + '  TP:' + setupTP.toFixed(4) + '  SL:' + setupSL.toFixed(4), 'green');
-}
-
+// ── EXIT CHECK ────────────────────────────────────────────────────────────────
+// Only called on polls AFTER entry — not same poll as entry
 function checkExit(price) {
   if (!openTrade) return;
   const { entry, tp, sl, ts } = openTrade;
+
+  // Dont check exit on the same poll we entered
+  if (Date.now() - ts < 5000) return;
+
   let closed = false;
   let reason = '';
   let exitPrice = price;
@@ -569,7 +580,7 @@ function checkExit(price) {
 
   if (price >= tp) {
     exitPrice = tp;
-    net    = NOTIONAL * (tp - entry) / entry;   // maker TP — no fee
+    net    = NOTIONAL * (tp - entry) / entry;
     reason = 'TP';
     closed = true;
   } else if (price <= sl) {
@@ -641,16 +652,13 @@ function renderPrices(last, chg) {
 function renderLong() {
   if (!setupEntry) return;
   const lc = document.getElementById('longCard');
-
   if (openTrade) {
-    // Trade active — lock values, highlight card
     document.getElementById('longEntry').textContent = openTrade.entry.toFixed(4);
     document.getElementById('longTP').textContent    = openTrade.tp.toFixed(4);
     document.getElementById('longSL').textContent    = openTrade.sl.toFixed(4);
     document.getElementById('longProj').textContent  = fmtPnl(projWin(openTrade.entry));
     lc.className = 'sig-card long-active';
   } else {
-    // No trade — show current setup levels
     document.getElementById('longEntry').textContent = setupEntry.toFixed(4);
     document.getElementById('longTP').textContent    = setupTP.toFixed(4);
     document.getElementById('longSL').textContent    = setupSL.toFixed(4);
@@ -661,22 +669,15 @@ function renderLong() {
 
 function renderLadder(price) {
   const rows = [];
+  const src  = openTrade || { entry: setupEntry, tp: setupTP, sl: setupSL };
   for (let i = 3; i >= -3; i--) {
     const p = +(price + i * tick).toFixed(6);
     let tag = '';
     let tagClass = '';
-
-    if (openTrade) {
-      if (Math.abs(p - openTrade.tp)    < tick * 0.5) { tag = 'TP';    tagClass = 'tag-tp-long'; }
-      else if (Math.abs(p - openTrade.entry) < tick * 0.5) { tag = 'ENTRY'; tagClass = 'tag-entry'; }
-      else if (Math.abs(p - openTrade.sl)    < tick * 0.5) { tag = 'SL';    tagClass = 'tag-sl'; }
-    } else if (setupEntry) {
-      if (Math.abs(p - setupTP)    < tick * 0.5) { tag = 'TP';    tagClass = 'tag-tp-long'; }
-      else if (Math.abs(p - setupEntry) < tick * 0.5) { tag = 'ENTRY'; tagClass = 'tag-entry'; }
-      else if (Math.abs(p - setupSL)    < tick * 0.5) { tag = 'SL';    tagClass = 'tag-sl'; }
-    }
+    if (src.tp    !== null && Math.abs(p - src.tp)    < tick * 0.5) { tag = 'TP';    tagClass = 'tag-tp-long'; }
+    if (src.entry !== null && Math.abs(p - src.entry) < tick * 0.5) { tag = 'ENTRY'; tagClass = 'tag-entry'; }
+    if (src.sl    !== null && Math.abs(p - src.sl)    < tick * 0.5) { tag = 'SL';    tagClass = 'tag-sl'; }
     if (Math.abs(p - price) < tick * 0.5) { tag = 'NOW'; tagClass = 'tag-current'; }
-
     const arrow = i > 0 ? '▲' : i < 0 ? '▼' : '●';
     const col   = i > 0 ? 'green' : i < 0 ? 'red' : 'blue';
     rows.push(
@@ -732,8 +733,8 @@ function renderLog() {
 }
 
 function renderStats() {
-  const st  = trades.filter(t => t.ts >= sessionStart);
-  const net = st.reduce((s,t) => s + t.net, 0);
+  const st   = trades.filter(t => t.ts >= sessionStart);
+  const net  = st.reduce((s,t) => s + t.net, 0);
   const wins = st.filter(t => t.outcome === 'WIN').length;
   const tot  = st.length;
   const el   = document.getElementById('sessionPnl');
@@ -759,12 +760,12 @@ async function poll() {
   const raw = await fetchCandles(CANDLES);
   if (!raw.length) return;
 
-  candles = raw;
-  tick    = inferTick(candles);
+  candles  = raw;
+  tick     = inferTick(candles);
 
-  const last  = candles[candles.length - 1];
-  const first = candles[0];
-  const price = last.close;
+  const last   = candles[candles.length - 1];
+  const first  = candles[0];
+  const price  = last.close;
   const pctChg = (price - first.open) / first.open * 100;
 
   high24 = Math.max(...candles.map(c => c.high));
@@ -772,15 +773,20 @@ async function poll() {
 
   renderPrices(price, pctChg);
 
-  // Update zone — only resets setup if price moves outside ± 1 tick
-  if (!openTrade) updateZone(price);
+  // Step 1 — check exit on existing trade first
+  if (openTrade) {
+    checkExit(price);
+  }
 
+  // Step 2 — if no open trade, check if zone needs update and enter
+  if (!openTrade) {
+    updateZone(price);
+  }
+
+  // Step 3 — render
   renderLong();
   renderLadder(price);
   renderCandles(candles);
-
-  // Check exit on open trade
-  if (openTrade) checkExit(price);
 }
 
 // ── INIT ──────────────────────────────────────────────────────────────────────
@@ -788,9 +794,8 @@ setInterval(renderClock, 1000);
 renderClock();
 renderLog();
 renderStats();
-// Hide hold timer on load
 document.getElementById('holdTimer').style.display = 'none';
-addAlert('GO', 'SNX Tick Scalper v2 started · LONG only · sticky zone', 'green');
+addAlert('GO', 'SNX Tick Scalper v3 · LONG only · sticky zone', 'green');
 poll();
 setInterval(poll, POLL_MS);
 </script>
