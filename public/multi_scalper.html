@@ -700,7 +700,7 @@ function renderTicker(sym) {
   const recentBP = today.slice(-3).reverse().map(t => {
     const cls  = (t.net||0) >= 0 ? 'green' : 'red';
     const ttcls = t.tradeType === 'REPEAT' ? 'type-repeat' : 'type-new';
-    return '<div class="bp-trade-row" onclick="openDetail(''+t.id+'')">' +
+    return '<div class="bp-trade-row" onclick="openDetail(\'' + t.id + '\')">'+
       '<span class="bp-trade-type '+ttcls+'">'+(t.tradeType||'NEW')+'</span>' +
       '<span class="bp-trade-price">@'+fmtPrice(t.detectionPrice||t.entry,st.tick)+'</span>' +
       '<span class="bp-trade-pnl '+cls+'">'+fmtPnl(t.net||0)+'</span>' +
