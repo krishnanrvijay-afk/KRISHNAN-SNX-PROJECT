@@ -332,6 +332,7 @@ const MIN_CANDLES = 6;     // range-check window: last 6 closes (focuses on curr
 const TICK_WINDOW = 3;
 const CLUSTER_WIN  = 5;
 const CLUSTER_MIN  = 4;   // tighter cluster requirement to compensate for shorter range window
+const MAX_HOLD_CANDLES = 5;   // force-exit (market close) after this many post-fill candles with no TP/SL hit
 const BLACKOUT_H  = [9, 10];
 
 // Diagnostic log buffer — unlimited during session, persisted to localStorage
@@ -493,7 +494,7 @@ function detectOsc(candles, tick) {
   const win    = candles.slice(-MIN_CANDLES);
   const closeH = Math.max(...win.map(x => x.close));
   const closeL = Math.min(...win.map(x => x.close));
-  if ((closeH - closeL) > TICK_WINDOW * tick) return null;
+  if (Math.round((closeH - closeL) / tick) > TICK_WINDOW) return null;
   const closes = candles.slice(-CLUSTER_WIN).map(x => x.close).sort((a, b) => a - b);
   let clustered = false;
   for (let i = 0; i <= closes.length - CLUSTER_MIN; i++) {
@@ -626,7 +627,7 @@ async function processSym(sym) {
   const threshold = TICK_WINDOW * st.tick;
   diagPush(p+'.8',  'OSC — 10C CLOSE HI',  fmtPrice(closeH10, st.tick), 'info');
   diagPush(p+'.9',  'OSC — 10C CLOSE LO',  fmtPrice(closeL10, st.tick), 'info');
-  diagPush(p+'.10', 'OSC — 10C RANGE',     range10.toFixed(5) + ' (max: ' + threshold.toFixed(5) + ')', range10 <= threshold ? 'ok' : 'bad');
+  diagPush(p+'.10', 'OSC — 10C RANGE',     range10.toFixed(5) + ' (max: ' + threshold.toFixed(5) + ')', Math.round(range10/st.tick) <= TICK_WINDOW ? 'ok' : 'bad');
 
   const closes5 = raw.slice(-CLUSTER_WIN).map(x => x.close).sort((a,b) => a-b);
   let clusterFound = false, clusterRange = null;
@@ -715,6 +716,21 @@ async function processSym(sym) {
         st.openLong.bandUpper = recentHigh3;
         st.openLong.bandTicks = Math.round(recentWidth / st.tick);
       }
+    } else if ((!st.openLong || !st.openLong.fillConfirmed) && Math.abs(osc.lower - st.oscLower) >= st.tick) {
+      // Band drifted by ≥1 tick — track it for unfilled trades so re-arm entry stays current
+      st.oscUpper = osc.upper;
+      st.oscLower = osc.lower;
+      if (st.openLong) {
+        st.openLong.entry     = osc.lower;
+        st.openLong.target    = osc.upper;
+        st.openLong.sl        = osc.lower - 2 * st.tick;
+        st.openLong.bandLower = osc.lower;
+        st.openLong.bandUpper = osc.upper;
+        st.openLong.bandTicks = Math.round((osc.upper - osc.lower) / st.tick);
+        diagPush(p+'.21', 'BAND DRIFT', 'entry → ' + fmtPrice(osc.lower,st.tick) + ' – ' + fmtPrice(osc.upper,st.tick), 'warn');
+      } else {
+        diagPush(p+'.21', 'BAND DRIFT', fmtPrice(osc.lower,st.tick) + ' – ' + fmtPrice(osc.upper,st.tick), 'warn');
+      }
     } else {
       diagPush(p+'.21', 'BAND TIGHTEN', 'no — ' + (st.openLong && st.openLong.fillConfirmed ? 'already filled' : 'not tight enough'), 'muted');
     }
@@ -724,33 +740,35 @@ async function processSym(sym) {
       // candle — using strictly-after filter prevents re-filling on the TP candle's
       // own low. Initial trades use the standard 3-candle window so they still
       // detect a fill that happened 1-2 candles before detection was confirmed.
-      let fillLow, fillDesc;
-      if (st.openLong.tradeType === 'REPEAT' && st.openLong.openedAtCandleTs) {
-        const fillCandles = raw.filter(c => c.ts > st.openLong.openedAtCandleTs);
-        fillLow  = fillCandles.length > 0 ? Math.min(...fillCandles.map(c => c.low)) : Infinity;
-        fillDesc = fillCandles.length + 'c after re-arm';
-      } else {
-        fillLow  = recentLow3;
-        fillDesc = '3c window';
-      }
-      const wasFilled = fillLow <= st.openLong.entry;
-      diagPush(p+'.22', 'FILL CHECK', 'fillLow ' + fmtPrice(fillLow,st.tick) + ' vs entry ' + fmtPrice(st.openLong.entry,st.tick) + ' (' + fillDesc + ')', wasFilled ? 'ok' : 'muted');
-      if (wasFilled && !st.openLong.fillConfirmed) {
-        if (fillLow <= st.openLong.sl) {
-          diagPush(p+'.23', 'SPIKE SWEEP', 'low ' + fmtPrice(fillLow,st.tick) + ' hit BOTH entry AND SL — discarded', 'bad');
-          st.openLong = null;
-          st.inOsc    = false;
-          st.action   = 'NO_TRADE';
+      if (!st.openLong.fillConfirmed) {
+        let fillLow, fillDesc;
+        if (st.openLong.tradeType === 'REPEAT' && st.openLong.openedAtCandleTs) {
+          const fillCandles = raw.filter(c => c.ts > st.openLong.openedAtCandleTs);
+          fillLow  = fillCandles.length > 0 ? Math.min(...fillCandles.map(c => c.low)) : Infinity;
+          fillDesc = fillCandles.length + 'c after re-arm';
         } else {
-          st.openLong.fillConfirmed    = true;
-          st.openLong.filledAtCandleTs = last.ts;
-          st.openLong.candleLowAtFill  = fillLow;
-          st.openLong.fillPrice        = st.openLong.entry;
-          st.openLong.fillTime         = fmtTime(Date.now());
-          diagPush(p+'.23', 'FILL CONFIRMED', 'entry ' + fmtPrice(st.openLong.entry,st.tick) + ' · candle low ' + fmtPrice(fillLow,st.tick), 'ok');
+          fillLow  = recentLow3;
+          fillDesc = '3c window';
         }
-      } else if (!wasFilled) {
-        diagPush(p+'.23', 'NOT FILLED YET', 'waiting for price to reach ' + fmtPrice(st.openLong.entry,st.tick), 'muted');
+        const wasFilled = fillLow <= st.openLong.entry;
+        diagPush(p+'.22', 'FILL CHECK', 'fillLow ' + fmtPrice(fillLow,st.tick) + ' vs entry ' + fmtPrice(st.openLong.entry,st.tick) + ' (' + fillDesc + ')', wasFilled ? 'ok' : 'muted');
+        if (wasFilled) {
+          if (fillLow <= st.openLong.sl) {
+            diagPush(p+'.23', 'SPIKE SWEEP', 'low ' + fmtPrice(fillLow,st.tick) + ' hit BOTH entry AND SL — discarded', 'bad');
+            st.openLong = null;
+            st.inOsc    = false;
+            st.action   = 'NO_TRADE';
+          } else {
+            st.openLong.fillConfirmed    = true;
+            st.openLong.filledAtCandleTs = last.ts;
+            st.openLong.candleLowAtFill  = fillLow;
+            st.openLong.fillPrice        = st.openLong.entry;
+            st.openLong.fillTime         = fmtTime(Date.now());
+            diagPush(p+'.23', 'FILL CONFIRMED', 'entry ' + fmtPrice(st.openLong.entry,st.tick) + ' · candle low ' + fmtPrice(fillLow,st.tick), 'ok');
+          }
+        } else {
+          diagPush(p+'.23', 'NOT FILLED YET', 'waiting for price to reach ' + fmtPrice(st.openLong.entry,st.tick), 'muted');
+        }
       }
 
       if (st.openLong && st.openLong.fillConfirmed) {
@@ -778,8 +796,13 @@ async function processSym(sym) {
             closeTrade(sym, st.openLong.sl, 'SL', null);
             st.inOsc  = false;
             st.action = 'NO_TRADE';
+          } else if (pfCandles.length >= MAX_HOLD_CANDLES) {
+            diagPush(p+'.27', 'MAX HOLD', pfCandles.length + 'c — force-exit at ' + fmtPrice(last.close,st.tick), 'bad');
+            closeTrade(sym, last.close, 'TIMEOUT', null);
+            st.inOsc  = false;
+            st.action = 'NO_TRADE';
           } else {
-            diagPush(p+'.27', 'IN TRADE — HOLDING', 'post-fill low ' + fmtPrice(pfLow,st.tick) + ' · high ' + fmtPrice(pfHigh,st.tick), 'warn');
+            diagPush(p+'.27', 'IN TRADE — HOLDING', 'post-fill low ' + fmtPrice(pfLow,st.tick) + ' · high ' + fmtPrice(pfHigh,st.tick) + ' · ' + pfCandles.length + '/' + MAX_HOLD_CANDLES + 'c', 'warn');
           }
         }
       }
@@ -1047,8 +1070,8 @@ function renderFullLog() {
       '<td><span class="trade-type type-'+(t.tradeType==='NEW'?'new':'repeat')+'">'+(t.tradeType||'NEW')+'</span></td>' +
       '<td>'+TOKEN_CONFIG[t.sym].label+'</td>' +
       '<td class="yellow">'+fmtPrice(t.entry,tick)+'</td>' +
-      '<td class="'+(t.exitReason==='TP'?'green':'red')+'">'+fmtPrice(t.exit,tick)+'</td>' +
-      '<td class="'+(t.exitReason==='TP'?'green':'red')+'">'+(t.exitReason||'--')+'</td>' +
+      '<td class="'+(t.exitReason==='TP'?'green':t.exitReason==='TIMEOUT'?'yellow':'red')+'">'+fmtPrice(t.exit,tick)+'</td>' +
+      '<td class="'+(t.exitReason==='TP'?'green':t.exitReason==='TIMEOUT'?'yellow':'red')+'">'+(t.exitReason||'--')+'</td>' +
       '<td class="'+cls+'">'+fmtPnl(t.net||0)+'</td>' +
       '<td class="muted">'+(t.timeClose||t.timeOpen||'--')+'</td>' +
     '</tr>';
