@@ -605,12 +605,9 @@ async function processSym(sym) {
   diagPush(p+'.5', 'TICK SIZE',       st.tick.toFixed(5), 'info');
   diagPush(p+'.6', 'DAY RANGE',       st.dayRange.toFixed(2) + '%', st.dayRange < 4 ? 'ok' : st.dayRange < 7 ? 'warn' : 'bad');
 
-  if (last.ts === st.lastCandleTs) {
-    diagPush(p+'.7', 'CANDLE CHECK', 'SAME CANDLE — no processing', 'muted');
-    return;
-  }
-  st.lastCandleTs = last.ts;
-  diagPush(p+'.7', 'CANDLE CHECK', 'NEW candle — processing', 'ok');
+  const isNewCandle = last.ts !== st.lastCandleTs;
+  if (isNewCandle) st.lastCandleTs = last.ts;
+  diagPush(p+'.7', 'CANDLE CHECK', isNewCandle ? 'NEW candle — processing' : 'LIVE candle — intra-poll processing', isNewCandle ? 'ok' : 'info');
 
   const osc = detectOsc(raw, st.tick);
 
@@ -779,8 +776,8 @@ async function processSym(sym) {
       }
     }
 
-    st.oscBreakCount = (st.oscBreakCount || 0) + 1;
-    diagPush(p+'.21', 'GRACE COUNT NOW', st.oscBreakCount + ' / 2', st.oscBreakCount >= 2 ? 'bad' : 'warn');
+    if (isNewCandle) st.oscBreakCount = (st.oscBreakCount || 0) + 1;
+    diagPush(p+'.21', 'GRACE COUNT NOW', st.oscBreakCount + ' / 2' + (isNewCandle ? '' : ' (intra-poll — not advanced)'), st.oscBreakCount >= 2 ? 'bad' : 'warn');
 
     if (st.oscBreakCount >= 2) {
       diagPush(p+'.22', 'GRACE EXPIRED', 'inOsc → false, action → NO_TRADE', 'bad');
