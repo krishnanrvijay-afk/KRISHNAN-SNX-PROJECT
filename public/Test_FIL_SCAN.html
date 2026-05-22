@@ -528,6 +528,7 @@ function buildTrade(sym, entry, target, sl, detectionPrice, candle) {
     gross: null, fees: null, net: null, outcome: null,
     holdMinutes: null,
     fillConfirmed:    false,
+    openedAtCandleTs: candle ? candle.ts : null, // set when trade is opened; fill only uses candles FROM this ts onward
     filledAtCandleTs: null,   // candle ts when fill confirmed — TP/SL only fires on candles AFTER this
     candleLowAtFill:  null,
     candleHighAtTP:   null,
@@ -714,21 +715,27 @@ async function processSym(sym) {
     }
 
     if (st.openLong) {
-      const wasFilled = recentLow3 <= st.openLong.entry;
-      diagPush(p+'.22', 'FILL CHECK', 'recentLow ' + fmtPrice(recentLow3,st.tick) + ' vs entry ' + fmtPrice(st.openLong.entry,st.tick), wasFilled ? 'ok' : 'muted');
+      // Only check fill using candles from when the trade was opened onward —
+      // prevents a SAME_TRADE from immediately re-filling using a previous candle's low.
+      const fillCandles = st.openLong.openedAtCandleTs
+        ? raw.filter(c => c.ts >= st.openLong.openedAtCandleTs)
+        : raw.slice(-3);
+      const fillLow = fillCandles.length > 0 ? Math.min(...fillCandles.map(c => c.low)) : Infinity;
+      const wasFilled = fillLow <= st.openLong.entry;
+      diagPush(p+'.22', 'FILL CHECK', 'fillLow ' + fmtPrice(fillLow,st.tick) + ' vs entry ' + fmtPrice(st.openLong.entry,st.tick) + ' (' + fillCandles.length + 'c from open)', wasFilled ? 'ok' : 'muted');
       if (wasFilled && !st.openLong.fillConfirmed) {
-        if (recentLow3 <= st.openLong.sl) {
-          diagPush(p+'.23', 'SPIKE SWEEP', 'low ' + fmtPrice(recentLow3,st.tick) + ' hit BOTH entry AND SL — discarded', 'bad');
+        if (fillLow <= st.openLong.sl) {
+          diagPush(p+'.23', 'SPIKE SWEEP', 'low ' + fmtPrice(fillLow,st.tick) + ' hit BOTH entry AND SL — discarded', 'bad');
           st.openLong = null;
           st.inOsc    = false;
           st.action   = 'NO_TRADE';
         } else {
           st.openLong.fillConfirmed    = true;
           st.openLong.filledAtCandleTs = last.ts;
-          st.openLong.candleLowAtFill  = recentLow3;
+          st.openLong.candleLowAtFill  = fillLow;
           st.openLong.fillPrice        = st.openLong.entry;
           st.openLong.fillTime         = fmtTime(Date.now());
-          diagPush(p+'.23', 'FILL CONFIRMED', 'entry ' + fmtPrice(st.openLong.entry,st.tick) + ' · candle low ' + fmtPrice(recentLow3,st.tick), 'ok');
+          diagPush(p+'.23', 'FILL CONFIRMED', 'entry ' + fmtPrice(st.openLong.entry,st.tick) + ' · candle low ' + fmtPrice(fillLow,st.tick), 'ok');
         }
       } else if (!wasFilled) {
         diagPush(p+'.23', 'NOT FILLED YET', 'waiting for price to reach ' + fmtPrice(st.openLong.entry,st.tick), 'muted');
