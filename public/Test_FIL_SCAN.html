@@ -527,11 +527,12 @@ function buildTrade(sym, entry, target, sl, detectionPrice, candle) {
     exit: null, exitReason: null, tsClose: null, timeClose: null,
     gross: null, fees: null, net: null, outcome: null,
     holdMinutes: null,
-    fillConfirmed:  false,
-    candleLowAtFill: null,
-    candleHighAtTP:  null,
-    fillPrice:       null,
-    fillTime:        null,
+    fillConfirmed:    false,
+    filledAtCandleTs: null,   // candle ts when fill confirmed — TP/SL only fires on candles AFTER this
+    candleLowAtFill:  null,
+    candleHighAtTP:   null,
+    fillPrice:        null,
+    fillTime:         null,
   };
 }
 
@@ -645,14 +646,21 @@ async function processSym(sym) {
   // Orphan handler
   if (st.openLong && st.openLong.fillConfirmed && !st.inOsc) {
     diagPush(p+'.18', 'BRANCH', 'ORPHAN HANDLER — filled trade, inOsc=false', 'warn');
-    if (recentHigh3 >= st.openLong.target) {
-      diagPush(p+'.19', 'ORPHAN — TP HIT', fmtPrice(recentHigh3,st.tick) + ' >= ' + fmtPrice(st.openLong.target,st.tick), 'ok');
-      closeTrade(sym, st.openLong.target, 'TP', recentHigh3);
-    } else if (recentLow3 <= st.openLong.sl) {
-      diagPush(p+'.19', 'ORPHAN — SL HIT', fmtPrice(recentLow3,st.tick) + ' <= ' + fmtPrice(st.openLong.sl,st.tick), 'bad');
-      closeTrade(sym, st.openLong.sl, 'SL', null);
+    const opfC = raw.filter(c => c.ts > st.openLong.filledAtCandleTs);
+    if (opfC.length === 0) {
+      diagPush(p+'.19', 'ORPHAN — WAITING', 'filled · next candle will check TP/SL', 'info');
     } else {
-      diagPush(p+'.19', 'ORPHAN — MONITORING', 'SL: ' + fmtPrice(st.openLong.sl,st.tick) + ' TP: ' + fmtPrice(st.openLong.target,st.tick), 'warn');
+      const opfHigh = Math.max(...opfC.map(c => c.high));
+      const opfLow  = Math.min(...opfC.map(c => c.low));
+      if (opfHigh >= st.openLong.target) {
+        diagPush(p+'.19', 'ORPHAN — TP HIT', fmtPrice(opfHigh,st.tick) + ' >= ' + fmtPrice(st.openLong.target,st.tick), 'ok');
+        closeTrade(sym, st.openLong.target, 'TP', opfHigh);
+      } else if (opfLow <= st.openLong.sl) {
+        diagPush(p+'.19', 'ORPHAN — SL HIT', fmtPrice(opfLow,st.tick) + ' <= ' + fmtPrice(st.openLong.sl,st.tick), 'bad');
+        closeTrade(sym, st.openLong.sl, 'SL', null);
+      } else {
+        diagPush(p+'.19', 'ORPHAN — MONITORING', 'SL: ' + fmtPrice(st.openLong.sl,st.tick) + ' TP: ' + fmtPrice(st.openLong.target,st.tick), 'warn');
+      }
     }
     return;
   }
@@ -715,10 +723,11 @@ async function processSym(sym) {
           st.inOsc    = false;
           st.action   = 'NO_TRADE';
         } else {
-          st.openLong.fillConfirmed   = true;
-          st.openLong.candleLowAtFill = recentLow3;
-          st.openLong.fillPrice       = st.openLong.entry;
-          st.openLong.fillTime        = fmtTime(Date.now());
+          st.openLong.fillConfirmed    = true;
+          st.openLong.filledAtCandleTs = last.ts;
+          st.openLong.candleLowAtFill  = recentLow3;
+          st.openLong.fillPrice        = st.openLong.entry;
+          st.openLong.fillTime         = fmtTime(Date.now());
           diagPush(p+'.23', 'FILL CONFIRMED', 'entry ' + fmtPrice(st.openLong.entry,st.tick) + ' · candle low ' + fmtPrice(recentLow3,st.tick), 'ok');
         }
       } else if (!wasFilled) {
@@ -728,21 +737,31 @@ async function processSym(sym) {
       if (st.openLong && st.openLong.fillConfirmed) {
         diagPush(p+'.24', 'FILLED TRADE SL', fmtPrice(st.openLong.sl,st.tick), 'info');
         diagPush(p+'.25', 'FILLED TRADE TP', fmtPrice(st.openLong.target,st.tick), 'info');
-        if (recentHigh3 >= st.openLong.target) {
-          diagPush(p+'.26', 'TP HIT', fmtPrice(recentHigh3,st.tick) + ' >= ' + fmtPrice(st.openLong.target,st.tick) + ' → WIN', 'ok');
-          closeTrade(sym, st.openLong.target, 'TP', recentHigh3);
-          st.action = 'SAME_TRADE';
-          if (last.close >= st.oscLower && !inBlackout()) {
-            openTrade(sym, st.oscLower, st.oscUpper, st.oscLower - 2 * st.tick, last.close, last);
-            diagPush(p+'.27', 'SAME TRADE ARMED', 'entry ' + fmtPrice(st.oscLower,st.tick) + ' fillConfirmed=false', 'warn');
-          }
-        } else if (recentLow3 <= st.openLong.sl) {
-          diagPush(p+'.26', 'SL HIT', fmtPrice(recentLow3,st.tick) + ' <= ' + fmtPrice(st.openLong.sl,st.tick) + ' → LOSS', 'bad');
-          closeTrade(sym, st.openLong.sl, 'SL', null);
-          st.inOsc  = false;
-          st.action = 'NO_TRADE';
+        // Only use candles that closed AFTER fill — prevents the same fill-candle's
+        // high/low from immediately re-triggering TP or SL on the next poll.
+        const pfCandles = raw.filter(c => c.ts > st.openLong.filledAtCandleTs);
+        if (pfCandles.length === 0) {
+          diagPush(p+'.26', 'IN TRADE — WAITING', 'filled · next candle will check TP/SL', 'info');
         } else {
-          diagPush(p+'.26', 'IN TRADE — HOLDING', 'low ' + fmtPrice(recentLow3,st.tick) + ' high ' + fmtPrice(recentHigh3,st.tick), 'warn');
+          const pfHigh = Math.max(...pfCandles.map(c => c.high));
+          const pfLow  = Math.min(...pfCandles.map(c => c.low));
+          diagPush(p+'.26', 'POST-FILL WINDOW', pfCandles.length + 'c · low ' + fmtPrice(pfLow,st.tick) + ' high ' + fmtPrice(pfHigh,st.tick), 'info');
+          if (pfHigh >= st.openLong.target) {
+            diagPush(p+'.27', 'TP HIT', fmtPrice(pfHigh,st.tick) + ' >= ' + fmtPrice(st.openLong.target,st.tick) + ' → WIN', 'ok');
+            closeTrade(sym, st.openLong.target, 'TP', pfHigh);
+            st.action = 'SAME_TRADE';
+            if (last.close >= st.oscLower && !inBlackout()) {
+              openTrade(sym, st.oscLower, st.oscUpper, st.oscLower - 2 * st.tick, last.close, last);
+              diagPush(p+'.28', 'SAME TRADE ARMED', 'entry ' + fmtPrice(st.oscLower,st.tick) + ' fillConfirmed=false', 'warn');
+            }
+          } else if (pfLow <= st.openLong.sl) {
+            diagPush(p+'.27', 'SL HIT', fmtPrice(pfLow,st.tick) + ' <= ' + fmtPrice(st.openLong.sl,st.tick) + ' → LOSS', 'bad');
+            closeTrade(sym, st.openLong.sl, 'SL', null);
+            st.inOsc  = false;
+            st.action = 'NO_TRADE';
+          } else {
+            diagPush(p+'.27', 'IN TRADE — HOLDING', 'post-fill low ' + fmtPrice(pfLow,st.tick) + ' · high ' + fmtPrice(pfHigh,st.tick), 'warn');
+          }
         }
       }
     } else {
@@ -760,19 +779,26 @@ async function processSym(sym) {
     diagPush(p+'.18', 'BRANCH', 'C — osc failed, grace period (count was ' + st.oscBreakCount + ')', 'warn');
 
     if (st.openLong && st.openLong.fillConfirmed) {
-      diagPush(p+'.19', 'GRACE SL/TP CHECK', 'filled trade — checking immediately', 'warn');
-      if (recentHigh3 >= st.openLong.target) {
-        diagPush(p+'.20', 'GRACE — TP HIT', fmtPrice(recentHigh3,st.tick) + ' >= ' + fmtPrice(st.openLong.target,st.tick) + ' → WIN', 'ok');
-        closeTrade(sym, st.openLong.target, 'TP', recentHigh3);
-        st.inOsc = false; st.oscBreakCount = 0; st.action = 'NO_TRADE';
-        return;
-      } else if (recentLow3 <= st.openLong.sl) {
-        diagPush(p+'.20', 'GRACE — SL HIT', fmtPrice(recentLow3,st.tick) + ' <= ' + fmtPrice(st.openLong.sl,st.tick) + ' → LOSS', 'bad');
-        closeTrade(sym, st.openLong.sl, 'SL', null);
-        st.inOsc = false; st.oscBreakCount = 0; st.action = 'NO_TRADE';
-        return;
+      diagPush(p+'.19', 'GRACE SL/TP CHECK', 'filled trade — checking post-fill candles', 'warn');
+      const gpfC = raw.filter(c => c.ts > st.openLong.filledAtCandleTs);
+      if (gpfC.length === 0) {
+        diagPush(p+'.20', 'GRACE — WAITING', 'filled · next candle will check TP/SL', 'info');
       } else {
-        diagPush(p+'.20', 'GRACE — IN RANGE', 'SL: ' + fmtPrice(st.openLong.sl,st.tick) + ' TP: ' + fmtPrice(st.openLong.target,st.tick) + ' · shielded by grace', 'warn');
+        const gpfHigh = Math.max(...gpfC.map(c => c.high));
+        const gpfLow  = Math.min(...gpfC.map(c => c.low));
+        if (gpfHigh >= st.openLong.target) {
+          diagPush(p+'.20', 'GRACE — TP HIT', fmtPrice(gpfHigh,st.tick) + ' >= ' + fmtPrice(st.openLong.target,st.tick) + ' → WIN', 'ok');
+          closeTrade(sym, st.openLong.target, 'TP', gpfHigh);
+          st.inOsc = false; st.oscBreakCount = 0; st.action = 'NO_TRADE';
+          return;
+        } else if (gpfLow <= st.openLong.sl) {
+          diagPush(p+'.20', 'GRACE — SL HIT', fmtPrice(gpfLow,st.tick) + ' <= ' + fmtPrice(st.openLong.sl,st.tick) + ' → LOSS', 'bad');
+          closeTrade(sym, st.openLong.sl, 'SL', null);
+          st.inOsc = false; st.oscBreakCount = 0; st.action = 'NO_TRADE';
+          return;
+        } else {
+          diagPush(p+'.20', 'GRACE — IN RANGE', 'SL: ' + fmtPrice(st.openLong.sl,st.tick) + ' TP: ' + fmtPrice(st.openLong.target,st.tick) + ' · shielded by grace', 'warn');
+        }
       }
     }
 
