@@ -317,6 +317,34 @@
   .footer { color: var(--muted); font-size: 9px; text-align: center; padding: 10px; border-top: 1px solid var(--border); }
 
   #detailView { display: none; padding: 10px; }
+
+  /* ── DIAG PILL STRIP ── */
+  .bp-diag-strip { display:flex; justify-content:space-between; align-items:center; padding:8px 14px; border-top:1px dashed #222; gap:8px; }
+  .diag-pill { flex:1; padding:6px 0; border-radius:4px; font-family:'JetBrains Mono',monospace; font-size:9px; font-weight:700; letter-spacing:0.5px; cursor:pointer; text-align:center; text-transform:uppercase; border:1px solid; background:none; }
+  .diag-pill-clear { border-color:rgba(255,61,61,0.25); color:var(--red); }
+  .diag-pill-start { border-color:rgba(74,98,114,0.3); color:var(--muted); }
+  .diag-pill-start.active { border-color:rgba(0,230,118,0.4); color:var(--green); animation:pulse 1.8s ease-in-out infinite; }
+
+  /* ── DIAG CARD (per-symbol) ── */
+  .diag-card { background:#000; border:2px solid #1a2a1a; border-radius:10px; margin-bottom:12px; overflow:hidden; }
+  .diag-header { display:flex; justify-content:space-between; align-items:center; padding:10px 14px; border-bottom:1px dashed #1a2a1a; background:#050f05; }
+  .diag-title { font-family:'Bebas Neue',sans-serif; font-size:20px; letter-spacing:2px; color:#00e676; }
+  .diag-subtitle { font-size:9px; color:#4a6272; letter-spacing:1px; text-transform:uppercase; }
+  .diag-log { padding:8px 14px 12px; font-family:'JetBrains Mono',monospace; font-size:10px; line-height:1.9; max-height:420px; overflow-y:auto; }
+  .diag-log::-webkit-scrollbar { width:4px; }
+  .diag-log::-webkit-scrollbar-track { background:#050f05; }
+  .diag-log::-webkit-scrollbar-thumb { background:#1a2a1a; border-radius:2px; }
+  .dline { display:flex; gap:8px; align-items:baseline; padding:1px 0; border-bottom:1px solid rgba(26,42,26,0.4); }
+  .dline:last-child { border-bottom:none; }
+  .dstep { min-width:22px; text-align:right; color:#1a4a1a; font-size:9px; font-weight:700; }
+  .dlabel { min-width:160px; color:#4a6272; font-size:9px; text-transform:uppercase; letter-spacing:0.5px; }
+  .dval { flex:1; font-size:10px; font-weight:700; }
+  .dval.ok    { color:#00e676; }
+  .dval.warn  { color:#ffd740; }
+  .dval.bad   { color:#ff3d3d; }
+  .dval.info  { color:#00c8ff; }
+  .dval.muted { color:#4a6272; }
+  .diag-ts { font-size:9px; color:#1a4a1a; white-space:nowrap; }
 </style>
 </head>
 <body>
@@ -463,6 +491,79 @@ function fmtPrice(v, tick) {
 }
 function fmtK(v) { return v >= 1000 ? '$' + (v/1000).toFixed(0) + 'K' : '$' + v.toFixed(0); }
 
+// ── PER-SYMBOL DIAGNOSTICS ────────────────────────────────────────────────────
+const diagLogs   = {};   // { SYM: [{step,label,val,cls,ts,wall},...] }
+const diagActive = {};   // { SYM: bool }
+const pollCount  = {};   // { SYM: number } — per-symbol so parallel polls don't share a counter
+
+SYMBOLS.forEach(sym => {
+  pollCount[sym]  = 0;
+  diagActive[sym] = false;
+  try {
+    const saved = localStorage.getItem('diag_' + sym);
+    diagLogs[sym] = saved ? JSON.parse(saved) : [];
+  } catch(e) { diagLogs[sym] = []; }
+});
+
+function diagPush(sym, step, label, val, cls) {
+  if (!diagActive[sym]) return;
+  diagLogs[sym].push({ step, label, val, cls: cls || 'info', ts: fmtTime(Date.now()), wall: new Date().toISOString() });
+  try { localStorage.setItem('diag_' + sym, JSON.stringify(diagLogs[sym])); } catch(e) {}
+}
+
+function renderDiag(sym) {
+  const el   = document.getElementById('diagLog_' + sym);
+  const tsEl = document.getElementById('diagTs_' + sym);
+  if (!el) return;
+  const log   = diagLogs[sym] || [];
+  const total = log.length;
+  if (tsEl) tsEl.textContent = 'last: ' + fmtTime(Date.now()) + ' · ' + total + ' entries';
+  const visible = log.slice(-80).reverse();
+  el.innerHTML = (visible.map(d =>
+    '<div class="dline">' +
+      '<span class="dstep">' + d.step + '</span>' +
+      '<span class="dlabel">' + d.label + '</span>' +
+      '<span class="dval ' + d.cls + '">' + d.val + '</span>' +
+      '<span class="diag-ts">' + d.ts + '</span>' +
+    '</div>'
+  ).join('') +
+  (total > 80
+    ? '<div style="color:#1a4a1a;font-size:9px;padding:6px 0;text-align:center">… ' + (total - 80) + ' earlier entries in CSV export …</div>'
+    : '')) ||
+  '<div style="color:#4a6272;padding:8px 0">No data yet</div>';
+}
+
+function exportDiagCSV(sym) {
+  const log = diagLogs[sym] || [];
+  const cfg = TOKEN_CONFIG[sym];
+  const header = 'WallTime,PollStep,Label,Value,Status\n';
+  const rows = log.map(d =>
+    [d.wall, d.step, '"' + d.label.replace(/"/g,'""') + '"',
+     '"' + String(d.val).replace(/"/g,'""') + '"', d.cls].join(',')
+  ).join('\n');
+  const blob = new Blob([header + rows], { type: 'text/csv' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = cfg.label + '_diag_' + new Date().toISOString().slice(0,16).replace(/[T:]/g,'-') + '.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function toggleDiag(sym) {
+  diagActive[sym] = !diagActive[sym];
+  const panel = document.getElementById('diag_' + sym);
+  if (panel) panel.style.display = diagActive[sym] ? 'block' : 'none';
+  renderTicker(sym);
+  if (diagActive[sym]) renderDiag(sym);
+}
+
+function clearDiag(sym) {
+  diagLogs[sym] = [];
+  try { localStorage.removeItem('diag_' + sym); } catch(e) {}
+  renderDiag(sym);
+}
+
 // ── FETCH CANDLES ─────────────────────────────────────────────────────────────
 async function fetchCandles(symbol, limit) {
   try {
@@ -608,15 +709,21 @@ function mergeCandles(stored, fresh) {
   return Array.from(map.values()).sort((a, b) => a.ts - b.ts).slice(-25);
 }
 
-// ── PROCESS CANDLE ────────────────────────────────────────────────────────────
+// ── PROCESS CANDLE (with optional per-symbol diagnostics) ─────────────────────
 async function processSym(sym) {
-  const st    = state[sym];
-  // First call seeds history with 25 candles; after that only 4 are needed —
-  // the live candle + 3 preceding ones to update the sliding window. The full
-  // history stays in st.candles so detectOsc (needs 10) always has enough data.
+  const p  = ++pollCount[sym];
+  const dp = (step, label, val, cls) => diagPush(sym, step, label, val, cls);
+  const st = state[sym];
+
   const limit = st.candles.length >= 25 ? 4 : 25;
+  dp(p+'.1', 'POLL START', 'fetching ' + limit + ' candles' + (limit===4?' (incremental, history in memory)':'  (seed)'), 'muted');
+
   const fresh = await fetchCandles(sym, limit);
-  if (!fresh.length) return;
+  if (!fresh.length) {
+    dp(p+'.2', 'FETCH RESULT', 'NO DATA — skipped', 'bad');
+    return;
+  }
+
   const raw   = limit === 4 ? mergeCandles(st.candles, fresh) : fresh;
   st.candles  = raw;
   st.tick     = inferTick(raw);
@@ -626,33 +733,71 @@ async function processSym(sym) {
   const dayLow  = Math.min(...raw.map(c => c.low));
   st.dayRange   = (dayHigh - dayLow) / dayLow * 100;
 
-  // Track whether this poll sees a freshly-closed candle or the same live one.
-  // detectOsc runs on every poll so the dance is caught mid-candle.
-  // oscBreakCount stays candle-gated so the grace period keeps its timing.
+  dp(p+'.2', 'CANDLES FETCHED', raw.length + ' in window · fetched ' + fresh.length, 'ok');
+  dp(p+'.3', 'LAST CANDLE TS',  fmtTime(last.ts) + ' EDT', 'info');
+  dp(p+'.4', 'LAST CLOSE',      fmtPrice(last.close, st.tick), 'info');
+  dp(p+'.5', 'TICK SIZE',       st.tick.toFixed(5), 'info');
+  dp(p+'.6', 'DAY RANGE',       st.dayRange.toFixed(2) + '%', st.dayRange < 4 ? 'ok' : st.dayRange < 7 ? 'warn' : 'bad');
+
   const isNewCandle = last.ts !== st.lastCandleTs;
   if (isNewCandle) st.lastCandleTs = last.ts;
+  dp(p+'.7', 'CANDLE CHECK', isNewCandle ? 'NEW candle — processing' : 'LIVE candle — intra-poll processing', isNewCandle ? 'ok' : 'info');
 
   const osc = detectOsc(raw, st.tick);
 
-  // Orphan-trade handler: once a trade is filled, SL and TP govern the exit —
-  // not the oscillation state. If the pattern broke while we were in a confirmed
-  // position, keep watching price until SL or TP is hit rather than exiting at
-  // market mid-trade for a fee-only loss.
+  const win10    = raw.slice(-MIN_CANDLES);
+  const closeH10 = Math.max(...win10.map(x => x.close));
+  const closeL10 = Math.min(...win10.map(x => x.close));
+  const range10  = closeH10 - closeL10;
+  const threshold = TICK_WINDOW * st.tick;
+  dp(p+'.8',  'OSC — 10C CLOSE HI', fmtPrice(closeH10, st.tick), 'info');
+  dp(p+'.9',  'OSC — 10C CLOSE LO', fmtPrice(closeL10, st.tick), 'info');
+  dp(p+'.10', 'OSC — 10C RANGE',    range10.toFixed(5) + ' (max: ' + threshold.toFixed(5) + ')', Math.round(range10/st.tick) <= TICK_WINDOW ? 'ok' : 'bad');
+
+  const closes5 = raw.slice(-CLUSTER_WIN).map(x => x.close).sort((a,b) => a-b);
+  let clusterFound = false, clusterRange = null;
+  for (let i = 0; i <= closes5.length - CLUSTER_MIN; i++) {
+    const r = closes5[i + CLUSTER_MIN - 1] - closes5[i];
+    if (r <= st.tick * 2) { clusterFound = true; clusterRange = r; break; }
+  }
+  dp(p+'.11', 'OSC — CLUSTER 5C', clusterFound ? ('YES · range ' + (clusterRange||0).toFixed(5)) : 'NO cluster within 2tk', clusterFound ? 'ok' : 'warn');
+  dp(p+'.12', 'OSC RESULT',       osc ? ('DETECTED · ' + fmtPrice(osc.lower,st.tick) + ' – ' + fmtPrice(osc.upper,st.tick)) : 'NOT DETECTED', osc ? 'ok' : 'muted');
+
+  dp(p+'.13', 'STATE inOsc',         st.inOsc ? 'true' : 'false', st.inOsc ? 'ok' : 'muted');
+  dp(p+'.14', 'STATE oscBreakCount', String(st.oscBreakCount), st.oscBreakCount > 0 ? 'warn' : 'muted');
+  dp(p+'.15', 'STATE openLong',      st.openLong ? (st.openLong.fillConfirmed ? 'FILLED @ ' + fmtPrice(st.openLong.fillPrice, st.tick) : 'PENDING entry ' + fmtPrice(st.openLong.entry, st.tick)) : 'none', st.openLong ? (st.openLong.fillConfirmed ? 'ok' : 'warn') : 'muted');
+
+  const recentHigh  = Math.max(...raw.slice(-3).map(c => c.high));
+  const recentLow   = Math.min(...raw.slice(-3).map(c => c.low));
+  const recentWidth = recentHigh - recentLow;
+  dp(p+'.16', '3C RECENT HIGH', fmtPrice(recentHigh, st.tick), 'info');
+  dp(p+'.17', '3C RECENT LOW',  fmtPrice(recentLow,  st.tick), 'info');
+
+  // ── ORPHAN HANDLER ──────────────────────────────────────────────────────────
   if (st.openLong && st.openLong.fillConfirmed && !st.inOsc) {
+    dp(p+'.18', 'BRANCH', 'ORPHAN HANDLER — filled trade, inOsc=false', 'warn');
     const opfC = raw.filter(c => c.ts > st.openLong.filledAtCandleTs);
-    if (opfC.length > 0) {
+    if (opfC.length === 0) {
+      dp(p+'.19', 'ORPHAN — WAITING', 'filled · next candle will check TP/SL', 'info');
+    } else {
       const opfHigh = Math.max(...opfC.map(c => c.high));
       const opfLow  = Math.min(...opfC.map(c => c.low));
       if (opfHigh >= st.openLong.target) {
+        dp(p+'.19', 'ORPHAN — TP HIT', fmtPrice(opfHigh,st.tick) + ' >= ' + fmtPrice(st.openLong.target,st.tick), 'ok');
         closeTrade(sym, st.openLong.target, 'TP', opfHigh);
       } else if (opfLow <= st.openLong.sl) {
+        dp(p+'.19', 'ORPHAN — SL HIT', fmtPrice(opfLow,st.tick) + ' <= ' + fmtPrice(st.openLong.sl,st.tick), 'bad');
         closeTrade(sym, st.openLong.sl, 'SL', null);
+      } else {
+        dp(p+'.19', 'ORPHAN — MONITORING', 'SL: ' + fmtPrice(st.openLong.sl,st.tick) + ' TP: ' + fmtPrice(st.openLong.target,st.tick), 'warn');
       }
     }
-    return;  // open position takes priority; re-arm on next candle after it resolves
+    return;
   }
 
   if (osc && !st.inOsc) {
+    // ── BRANCH A: new oscillation ────────────────────────────────────────────
+    dp(p+'.18', 'BRANCH', 'A — new oscillation (was FLAT)', 'ok');
     const isNew = st.prevOscLower !== osc.lower || st.prevOscUpper !== osc.upper;
     st.inOsc          = true;
     st.prevOscLower   = st.oscLower;
@@ -661,26 +806,28 @@ async function processSym(sym) {
     st.oscLower       = osc.lower;
     st.initialOscWidth = osc.upper - osc.lower;
     st.oscCount++;
-    st.action         = isNew && st.prevOscLower > 0 ? 'NEW_SETUP' : 'ARMED';
-    // Arm trade only if price at or above entry level and not in blackout
-    if (last.close >= st.oscLower && !inBlackout()) {
+    st.action = isNew && st.prevOscLower > 0 ? 'NEW_SETUP' : 'ARMED';
+    dp(p+'.19', 'ACTION SET', st.action, 'ok');
+    dp(p+'.20', 'BAND', fmtPrice(st.oscLower,st.tick) + ' – ' + fmtPrice(st.oscUpper,st.tick), 'info');
+    const canArm = last.close >= st.oscLower && !inBlackout();
+    dp(p+'.21', 'CAN ARM?', canArm ? 'YES — price ' + fmtPrice(last.close,st.tick) + ' >= entry ' + fmtPrice(st.oscLower,st.tick) : 'NO — price ' + fmtPrice(last.close,st.tick) + ' < entry ' + fmtPrice(st.oscLower,st.tick), canArm ? 'ok' : 'warn');
+    if (canArm) {
       openTrade(sym, st.oscLower, st.oscUpper, st.oscLower - 2 * st.tick, last.close, last);
+      dp(p+'.22', 'TRADE OPENED', 'entry ' + fmtPrice(st.oscLower,st.tick) + ' TP ' + fmtPrice(st.oscUpper,st.tick) + ' SL ' + fmtPrice(st.oscLower - 2*st.tick, st.tick), 'ok');
     }
 
   } else if (osc && st.inOsc) {
-    st.oscBreakCount = 0;  // oscillation re-confirmed — clear any grace countdown
-    // Compute actual recent activity first — this is where price IS bouncing right now.
-    // Using last 3 candles instead of detectOsc's 10-candle extreme window, which stays
-    // wide until old extreme candles age out (~9 more polls after tightening begins).
-    const recentHigh  = Math.max(...raw.slice(-3).map(c => c.high));
-    const recentLow   = Math.min(...raw.slice(-3).map(c => c.low));
-    const recentWidth = recentHigh - recentLow;
-    const curWidth    = st.oscUpper - st.oscLower;
+    // ── BRANCH B: oscillation continuing ────────────────────────────────────
+    dp(p+'.18', 'BRANCH', 'B — oscillation continuing (inOsc=true)', 'ok');
+    st.oscBreakCount = 0;
 
-    // Part A: Band tightening — if the last 3 candles are oscillating in a range
-    // tighter than the armed band by at least half a tick, and the fill has not yet
-    // confirmed, adapt entry/TP/SL to the tighter activity band so 1-tick scalps fire.
-    if (recentWidth < curWidth - st.tick * 0.5 && (!st.openLong || !st.openLong.fillConfirmed)) {
+    const curWidth = st.oscUpper - st.oscLower;
+    dp(p+'.19', 'BAND NOW', fmtPrice(st.oscLower,st.tick) + ' – ' + fmtPrice(st.oscUpper,st.tick) + ' (' + Math.round(curWidth/st.tick) + 'tk)', 'info');
+    dp(p+'.20', '3C WIDTH vs BAND', recentWidth.toFixed(5) + ' vs ' + curWidth.toFixed(5), recentWidth < curWidth - st.tick * 0.5 ? 'warn' : 'muted');
+
+    const canTighten = recentWidth < curWidth - st.tick * 0.5 && (!st.openLong || !st.openLong.fillConfirmed);
+    if (canTighten) {
+      dp(p+'.21', 'BAND TIGHTEN', 'new band: ' + fmtPrice(recentLow,st.tick) + ' – ' + fmtPrice(recentHigh,st.tick), 'warn');
       st.oscUpper = recentHigh;
       st.oscLower = recentLow;
       if (st.openLong) {
@@ -705,107 +852,135 @@ async function processSym(sym) {
         st.openLong.bandLower = osc.lower;
         st.openLong.bandUpper = osc.upper;
         st.openLong.bandTicks = Math.round((osc.upper - osc.lower) / st.tick);
+        dp(p+'.21', 'BAND DRIFT ↓', 'entry → ' + fmtPrice(osc.lower,st.tick) + ' – ' + fmtPrice(osc.upper,st.tick), 'warn');
+      } else {
+        dp(p+'.21', 'BAND DRIFT ↓', fmtPrice(osc.lower,st.tick) + ' – ' + fmtPrice(osc.upper,st.tick), 'warn');
       }
+    } else {
+      dp(p+'.21', 'BAND TIGHTEN', 'no — ' + (st.openLong && st.openLong.fillConfirmed ? 'already filled' : osc.lower > st.oscLower ? 'band shifted up — holding entry' : 'not tight enough'), 'muted');
     }
 
     if (st.openLong) {
-      // SAME_TRADE re-arms must only fill on a candle that opened AFTER the TP
-      // candle — using strictly-after filter prevents re-filling on the TP candle's
-      // own low. Initial trades use the standard 3-candle window so they still
-      // detect a fill that happened 1-2 candles before detection was confirmed.
-      let fillLow;
-      if (st.openLong.tradeType === 'REPEAT' && st.openLong.openedAtCandleTs) {
-        const fillCandles = raw.filter(c => c.ts > st.openLong.openedAtCandleTs);
-        fillLow = fillCandles.length > 0 ? Math.min(...fillCandles.map(c => c.low)) : Infinity;
-      } else {
-        fillLow = recentLow;
-      }
-      const wasFilled = fillLow <= st.openLong.entry;
-      if (wasFilled && !st.openLong.fillConfirmed) {
-        // Part B: Spike-sweep guard — if the candle low touches both the entry
-        // AND the SL in the same candle, price blew straight through us on a
-        // spike. That is not a valid fill — discard the trade silently and
-        // reset so we wait for fresh oscillation rather than booking a loss.
-        if (fillLow <= st.openLong.sl) {
-          st.openLong = null;
-          st.inOsc    = false;
-          st.action   = 'NO_TRADE';
+      if (!st.openLong.fillConfirmed) {
+        let fillLow, fillDesc;
+        if (st.openLong.tradeType === 'REPEAT' && st.openLong.openedAtCandleTs) {
+          const fillCandles = raw.filter(c => c.ts > st.openLong.openedAtCandleTs);
+          fillLow  = fillCandles.length > 0 ? Math.min(...fillCandles.map(c => c.low)) : Infinity;
+          fillDesc = fillCandles.length + 'c after re-arm';
         } else {
-          st.openLong.fillConfirmed    = true;
-          st.openLong.filledAtCandleTs = last.ts;
-          st.openLong.candleLowAtFill  = fillLow;
-          st.openLong.fillPrice        = st.openLong.entry;
-          st.openLong.fillTime         = fmtTime(Date.now());
+          fillLow  = recentLow;
+          fillDesc = '3c window';
+        }
+        const wasFilled = fillLow <= st.openLong.entry;
+        dp(p+'.22', 'FILL CHECK', 'fillLow ' + fmtPrice(fillLow,st.tick) + ' vs entry ' + fmtPrice(st.openLong.entry,st.tick) + ' (' + fillDesc + ')', wasFilled ? 'ok' : 'muted');
+        if (wasFilled) {
+          if (fillLow <= st.openLong.sl) {
+            dp(p+'.23', 'SPIKE SWEEP', 'low ' + fmtPrice(fillLow,st.tick) + ' hit BOTH entry AND SL — discarded', 'bad');
+            st.openLong = null;
+            st.inOsc    = false;
+            st.action   = 'NO_TRADE';
+          } else {
+            st.openLong.fillConfirmed    = true;
+            st.openLong.filledAtCandleTs = last.ts;
+            st.openLong.candleLowAtFill  = fillLow;
+            st.openLong.fillPrice        = st.openLong.entry;
+            st.openLong.fillTime         = fmtTime(Date.now());
+            dp(p+'.23', 'FILL CONFIRMED', 'entry ' + fmtPrice(st.openLong.entry,st.tick) + ' · candle low ' + fmtPrice(fillLow,st.tick), 'ok');
+          }
+        } else {
+          dp(p+'.23', 'NOT FILLED YET', 'waiting for price to reach ' + fmtPrice(st.openLong.entry,st.tick), 'muted');
         }
       }
+
       if (st.openLong && st.openLong.fillConfirmed) {
-        // Only use candles AFTER the fill candle — prevents the same fill-candle's
-        // high/low from immediately re-triggering TP/SL and looping SAME_TRADE.
-        const pfC = raw.filter(c => c.ts > st.openLong.filledAtCandleTs);
-        if (pfC.length > 0) {
-          const pfHigh = Math.max(...pfC.map(c => c.high));
-          const pfLow  = Math.min(...pfC.map(c => c.low));
+        dp(p+'.24', 'FILLED TRADE SL', fmtPrice(st.openLong.sl,st.tick), 'info');
+        dp(p+'.25', 'FILLED TRADE TP', fmtPrice(st.openLong.target,st.tick), 'info');
+        const pfCandles = raw.filter(c => c.ts > st.openLong.filledAtCandleTs);
+        if (pfCandles.length === 0) {
+          dp(p+'.26', 'IN TRADE — WAITING', 'filled · next candle will check TP/SL', 'info');
+        } else {
+          const pfHigh = Math.max(...pfCandles.map(c => c.high));
+          const pfLow  = Math.min(...pfCandles.map(c => c.low));
+          dp(p+'.26', 'POST-FILL WINDOW', pfCandles.length + 'c · low ' + fmtPrice(pfLow,st.tick) + ' high ' + fmtPrice(pfHigh,st.tick), 'info');
           if (pfHigh >= st.openLong.target) {
+            dp(p+'.27', 'TP HIT', fmtPrice(pfHigh,st.tick) + ' >= ' + fmtPrice(st.openLong.target,st.tick) + ' → WIN', 'ok');
             closeTrade(sym, st.openLong.target, 'TP', pfHigh);
             st.action = 'SAME_TRADE';
             if (last.close >= st.oscLower && !inBlackout()) {
               openTrade(sym, st.oscLower, st.oscUpper, st.oscLower - 2 * st.tick, last.close, last);
+              dp(p+'.28', 'SAME TRADE ARMED', 'entry ' + fmtPrice(st.oscLower,st.tick) + ' fillConfirmed=false', 'warn');
             }
           } else if (pfLow <= st.openLong.sl) {
+            dp(p+'.27', 'SL HIT', fmtPrice(pfLow,st.tick) + ' <= ' + fmtPrice(st.openLong.sl,st.tick) + ' → LOSS', 'bad');
             closeTrade(sym, st.openLong.sl, 'SL', null);
             st.inOsc  = false;
             st.action = 'NO_TRADE';
-          } else if (pfC.length >= MAX_HOLD_CANDLES) {
+          } else if (pfCandles.length >= MAX_HOLD_CANDLES) {
+            dp(p+'.27', 'MAX HOLD', pfCandles.length + 'c — force-exit at ' + fmtPrice(last.close,st.tick), 'bad');
             closeTrade(sym, last.close, 'TIMEOUT', null);
             st.inOsc  = false;
             st.action = 'NO_TRADE';
+          } else {
+            dp(p+'.27', 'IN TRADE — HOLDING', 'post-fill low ' + fmtPrice(pfLow,st.tick) + ' · high ' + fmtPrice(pfHigh,st.tick) + ' · ' + pfCandles.length + '/' + MAX_HOLD_CANDLES + 'c', 'warn');
           }
         }
       }
-    } else if (last.close >= st.oscLower && !inBlackout()) {
-      if (st.action !== 'SAME_TRADE') st.action = 'ARMED';
-      openTrade(sym, st.oscLower, st.oscUpper, st.oscLower - 2 * st.tick, last.close, last);
+    } else {
+      const canArm = last.close >= st.oscLower && !inBlackout();
+      dp(p+'.22', 'NO OPEN TRADE', canArm ? 'arming new trade' : 'price below entry, watching', canArm ? 'warn' : 'muted');
+      if (canArm) {
+        if (st.action !== 'SAME_TRADE') st.action = 'ARMED';
+        openTrade(sym, st.oscLower, st.oscUpper, st.oscLower - 2 * st.tick, last.close, last);
+        dp(p+'.23', 'TRADE OPENED', 'entry ' + fmtPrice(st.oscLower,st.tick) + ' TP ' + fmtPrice(st.oscUpper,st.tick) + ' SL ' + fmtPrice(st.oscLower-2*st.tick,st.tick), 'ok');
+      }
     }
 
   } else if (!osc && st.inOsc) {
-    // Even during the grace window, a filled trade must be stopped out if SL is
-    // hit — the grace period should never shield a real loss. Check SL (and TP)
-    // immediately before touching the grace counter.
+    // ── BRANCH C: grace period ───────────────────────────────────────────────
+    dp(p+'.18', 'BRANCH', 'C — osc failed, grace period (count was ' + st.oscBreakCount + ')', 'warn');
     if (st.openLong && st.openLong.fillConfirmed) {
+      dp(p+'.19', 'GRACE SL/TP CHECK', 'filled trade — checking post-fill candles', 'warn');
       const gpfC = raw.filter(c => c.ts > st.openLong.filledAtCandleTs);
-      if (gpfC.length > 0) {
+      if (gpfC.length === 0) {
+        dp(p+'.20', 'GRACE — WAITING', 'filled · next candle will check TP/SL', 'info');
+      } else {
         const gpfHigh = Math.max(...gpfC.map(c => c.high));
         const gpfLow  = Math.min(...gpfC.map(c => c.low));
         if (gpfHigh >= st.openLong.target) {
+          dp(p+'.20', 'GRACE — TP HIT', fmtPrice(gpfHigh,st.tick) + ' >= ' + fmtPrice(st.openLong.target,st.tick) + ' → WIN', 'ok');
           closeTrade(sym, st.openLong.target, 'TP', gpfHigh);
           st.inOsc = false; st.oscBreakCount = 0; st.action = 'NO_TRADE';
           return;
         } else if (gpfLow <= st.openLong.sl) {
+          dp(p+'.20', 'GRACE — SL HIT', fmtPrice(gpfLow,st.tick) + ' <= ' + fmtPrice(st.openLong.sl,st.tick) + ' → LOSS', 'bad');
           closeTrade(sym, st.openLong.sl, 'SL', null);
           st.inOsc = false; st.oscBreakCount = 0; st.action = 'NO_TRADE';
           return;
+        } else {
+          dp(p+'.20', 'GRACE — IN RANGE', 'SL: ' + fmtPrice(st.openLong.sl,st.tick) + ' TP: ' + fmtPrice(st.openLong.target,st.tick) + ' · shielded by grace', 'warn');
         }
       }
     }
-    // Grace buffer: require 2 consecutive *closed candles* without detection before
-    // resetting — intra-poll misses don't count, so the timing stays at ~2 minutes.
     if (isNewCandle) st.oscBreakCount = (st.oscBreakCount || 0) + 1;
+    dp(p+'.21', 'GRACE COUNT NOW', st.oscBreakCount + ' / 2' + (isNewCandle ? '' : ' (intra-poll — not advanced)'), st.oscBreakCount >= 2 ? 'bad' : 'warn');
     if (st.oscBreakCount >= 2) {
+      dp(p+'.22', 'GRACE EXPIRED', 'inOsc → false, action → NO_TRADE', 'bad');
       st.inOsc         = false;
       st.oscBreakCount = 0;
       st.action        = 'NO_TRADE';
       if (st.openLong) {
         if (st.openLong.fillConfirmed) {
-          // Filled trade: do NOT exit at market. The orphan-trade handler above
-          // will keep watching SL/TP on every subsequent candle until the trade
-          // resolves naturally. Exiting at market here produces a fee-only loss
-          // even when price hasn't violated SL.
-          // (leave st.openLong intact — orphan handler takes over)
+          dp(p+'.23', 'ORPHAN TRADE', 'filled, kept open — orphan handler takes over', 'warn');
         } else {
-          st.openLong = null;  // unfilled limit — discard silently, no trade record
+          dp(p+'.23', 'UNFILLED LIMIT', 'discarded silently — no record', 'muted');
+          st.openLong = null;
         }
       }
     }
+
+  } else {
+    // ── BRANCH D: flat ───────────────────────────────────────────────────────
+    dp(p+'.18', 'BRANCH', 'D — flat, no oscillation, watching', 'muted');
   }
 }
 
@@ -1008,7 +1183,11 @@ function renderTicker(sym) {
         '<div class="bp-best-hours-label">Best Trading Hours (EDT)</div>' +
         '<div class="bp-best-hours-list">' + pills + '</div>' +
         '</div>';
-    })();
+    })() +
+    '<div class="bp-diag-strip">' +
+      '<button class="diag-pill diag-pill-clear" onclick="clearDiag(\''+sym+'\')">CLEAR LOG</button>' +
+      '<button class="diag-pill diag-pill-start'+(diagActive[sym]?' active':'')+'" onclick="toggleDiag(\''+sym+'\')">'+(diagActive[sym]?'● STOP LOG':'START LOG')+'</button>' +
+    '</div>';
 }
 
 // ── FULL TRADE LOG TAB ────────────────────────────────────────────────────────
@@ -1216,7 +1395,20 @@ function switchTab(tab) {
 // ── BUILD ─────────────────────────────────────────────────────────────────────
 function buildCards() {
   document.getElementById('tickerCards').innerHTML = SYMBOLS.map(sym =>
-    '<div class="ticker-card border-wait" id="card_'+sym+'"><div style="color:var(--muted);padding:8px">Loading '+TOKEN_CONFIG[sym].label+'...</div></div>'
+    '<div class="ticker-card border-wait" id="card_'+sym+'"><div style="color:var(--muted);padding:8px">Loading '+TOKEN_CONFIG[sym].label+'...</div></div>' +
+    '<div class="diag-card" id="diag_'+sym+'" style="display:none">' +
+      '<div class="diag-header">' +
+        '<div>' +
+          '<div class="diag-title">DIAGNOSTICS — '+TOKEN_CONFIG[sym].label+'</div>' +
+          '<div class="diag-subtitle">Step-by-step execution trace · updates every poll</div>' +
+        '</div>' +
+        '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">' +
+          '<button onclick="exportDiagCSV(\''+sym+'\')" style="background:rgba(0,200,255,0.12);border:1px solid rgba(0,200,255,0.3);color:#00c8ff;padding:5px 12px;border-radius:4px;font-family:\'JetBrains Mono\',monospace;font-size:9px;font-weight:700;cursor:pointer;letter-spacing:0.5px">EXPORT CSV</button>' +
+          '<div id="diagTs_'+sym+'" style="font-size:9px;color:#4a6272">--</div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="diag-log" id="diagLog_'+sym+'"><div style="color:#4a6272;padding:8px 0">Waiting for first poll...</div></div>' +
+    '</div>'
   ).join('');
 }
 
@@ -1240,6 +1432,7 @@ async function poll() {
   await Promise.all(SYMBOLS.map(async sym => {
     await processSym(sym);
     renderTicker(sym);
+    if (diagActive[sym]) renderDiag(sym);
   }));
   renderCombined();
   if (document.getElementById('tab-trades').classList.contains('active')) renderFullLog();
