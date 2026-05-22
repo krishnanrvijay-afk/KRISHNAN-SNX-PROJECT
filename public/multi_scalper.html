@@ -618,8 +618,11 @@ async function processSym(sym) {
   const dayLow  = Math.min(...raw.map(c => c.low));
   st.dayRange   = (dayHigh - dayLow) / dayLow * 100;
 
-  if (last.ts === st.lastCandleTs) return;
-  st.lastCandleTs = last.ts;
+  // Track whether this poll sees a freshly-closed candle or the same live one.
+  // detectOsc runs on every poll so the dance is caught mid-candle.
+  // oscBreakCount stays candle-gated so the grace period keeps its timing.
+  const isNewCandle = last.ts !== st.lastCandleTs;
+  if (isNewCandle) st.lastCandleTs = last.ts;
 
   const osc = detectOsc(raw, st.tick);
 
@@ -732,9 +735,9 @@ async function processSym(sym) {
         return;
       }
     }
-    // Grace buffer: require 2 consecutive failed detections before resetting.
-    // One stray candle (gap, news spike) should not wipe an armed setup.
-    st.oscBreakCount = (st.oscBreakCount || 0) + 1;
+    // Grace buffer: require 2 consecutive *closed candles* without detection before
+    // resetting — intra-poll misses don't count, so the timing stays at ~2 minutes.
+    if (isNewCandle) st.oscBreakCount = (st.oscBreakCount || 0) + 1;
     if (st.oscBreakCount >= 2) {
       st.inOsc         = false;
       st.oscBreakCount = 0;
