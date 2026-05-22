@@ -715,14 +715,21 @@ async function processSym(sym) {
     }
 
     if (st.openLong) {
-      // Only check fill using candles from when the trade was opened onward —
-      // prevents a SAME_TRADE from immediately re-filling using a previous candle's low.
-      const fillCandles = st.openLong.openedAtCandleTs
-        ? raw.filter(c => c.ts >= st.openLong.openedAtCandleTs)
-        : raw.slice(-3);
-      const fillLow = fillCandles.length > 0 ? Math.min(...fillCandles.map(c => c.low)) : Infinity;
+      // SAME_TRADE re-arms must only fill on a candle that opened AFTER the TP
+      // candle — using strictly-after filter prevents re-filling on the TP candle's
+      // own low. Initial trades use the standard 3-candle window so they still
+      // detect a fill that happened 1-2 candles before detection was confirmed.
+      let fillLow, fillDesc;
+      if (st.openLong.tradeType === 'REPEAT' && st.openLong.openedAtCandleTs) {
+        const fillCandles = raw.filter(c => c.ts > st.openLong.openedAtCandleTs);
+        fillLow  = fillCandles.length > 0 ? Math.min(...fillCandles.map(c => c.low)) : Infinity;
+        fillDesc = fillCandles.length + 'c after re-arm';
+      } else {
+        fillLow  = recentLow3;
+        fillDesc = '3c window';
+      }
       const wasFilled = fillLow <= st.openLong.entry;
-      diagPush(p+'.22', 'FILL CHECK', 'fillLow ' + fmtPrice(fillLow,st.tick) + ' vs entry ' + fmtPrice(st.openLong.entry,st.tick) + ' (' + fillCandles.length + 'c from open)', wasFilled ? 'ok' : 'muted');
+      diagPush(p+'.22', 'FILL CHECK', 'fillLow ' + fmtPrice(fillLow,st.tick) + ' vs entry ' + fmtPrice(st.openLong.entry,st.tick) + ' (' + fillDesc + ')', wasFilled ? 'ok' : 'muted');
       if (wasFilled && !st.openLong.fillConfirmed) {
         if (fillLow <= st.openLong.sl) {
           diagPush(p+'.23', 'SPIKE SWEEP', 'low ' + fmtPrice(fillLow,st.tick) + ' hit BOTH entry AND SL — discarded', 'bad');
