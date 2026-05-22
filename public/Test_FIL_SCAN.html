@@ -274,7 +274,10 @@
         <div class="diag-title">DIAGNOSTICS</div>
         <div class="diag-subtitle">Step-by-step execution trace · FIL · updates every poll</div>
       </div>
-      <div id="diagTs" style="font-size:9px;color:#4a6272">--</div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+        <button onclick="exportDiagCSV()" style="background:rgba(0,200,255,0.12);border:1px solid rgba(0,200,255,0.3);color:#00c8ff;padding:5px 12px;border-radius:4px;font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:700;cursor:pointer;letter-spacing:0.5px">EXPORT CSV</button>
+        <div id="diagTs" style="font-size:9px;color:#4a6272">--</div>
+      </div>
     </div>
     <div class="diag-log" id="diagLog">
       <div style="color:#4a6272;padding:8px 0">Waiting for first poll...</div>
@@ -331,27 +334,62 @@ const CLUSTER_WIN  = 5;
 const CLUSTER_MIN  = 3;
 const BLACKOUT_H  = [9, 10];
 
-// Diagnostic log buffer — keeps last 60 entries
-const diagLog = [];
-const DIAG_MAX = 60;
+// Diagnostic log buffer — unlimited during session, persisted to localStorage
+const DIAG_STORAGE_KEY = 'test_fil_diaglog';
+let diagLog = [];
+
+try {
+  const saved = localStorage.getItem(DIAG_STORAGE_KEY);
+  if (saved) diagLog = JSON.parse(saved);
+} catch(e) { diagLog = []; }
 
 function diagPush(step, label, val, cls) {
-  diagLog.push({ step, label, val, cls: cls || 'info', ts: fmtTime(Date.now()) });
-  if (diagLog.length > DIAG_MAX) diagLog.shift();
+  diagLog.push({
+    step, label, val,
+    cls:  cls || 'info',
+    ts:   fmtTime(Date.now()),
+    wall: new Date().toISOString()   // UTC wall-clock for the CSV
+  });
+  // Persist every entry immediately so refreshes don't lose data
+  try { localStorage.setItem(DIAG_STORAGE_KEY, JSON.stringify(diagLog)); } catch(e) {}
+}
+
+function exportDiagCSV() {
+  const header = 'WallTime,PollStep,Label,Value,Status\n';
+  const rows = diagLog.map(d =>
+    [d.wall, d.step, '"' + d.label.replace(/"/g,'""') + '"',
+     '"' + String(d.val).replace(/"/g,'""') + '"', d.cls].join(',')
+  ).join('\n');
+  const blob = new Blob([header + rows], { type: 'text/csv' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = 'FIL_diag_' + new Date().toISOString().slice(0,16).replace(/[T:]/g,'-') + '.csv';
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 function renderDiag() {
   const el = document.getElementById('diagLog');
   if (!el) return;
-  document.getElementById('diagTs').textContent = 'last poll: ' + fmtTime(Date.now());
-  el.innerHTML = diagLog.slice().reverse().map((d, i) =>
+  const total = diagLog.length;
+  document.getElementById('diagTs').textContent =
+    'last: ' + fmtTime(Date.now()) + ' · ' + total + ' entries';
+  // Show newest 80 on screen; full history is in memory and CSV
+  const visible = diagLog.slice(-80).reverse();
+  el.innerHTML = visible.map(d =>
     '<div class="dline">' +
       '<span class="dstep">' + d.step + '</span>' +
       '<span class="dlabel">' + d.label + '</span>' +
       '<span class="dval ' + d.cls + '">' + d.val + '</span>' +
       '<span class="diag-ts">' + d.ts + '</span>' +
     '</div>'
-  ).join('') || '<div style="color:#4a6272;padding:8px 0">No data yet</div>';
+  ).join('') +
+  (total > 80
+    ? '<div style="color:#1a4a1a;font-size:9px;padding:6px 0;text-align:center">' +
+      '… ' + (total - 80) + ' earlier entries in CSV export …</div>'
+    : '') ||
+  '<div style="color:#4a6272;padding:8px 0">No data yet</div>';
 }
 
 // ── STATE ─────────────────────────────────────────────────────────────────────
@@ -1122,6 +1160,7 @@ function clearAllTrades() {
   });
   allTrades = [];
   diagLog.length = 0;
+  try { localStorage.removeItem(DIAG_STORAGE_KEY); } catch(e) {}
   renderDiag();
   renderCombined();
   SYMBOLS.forEach(renderTicker);
