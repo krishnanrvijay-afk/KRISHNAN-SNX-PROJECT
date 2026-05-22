@@ -554,11 +554,12 @@ function buildTrade(sym, entry, target, sl, detectionPrice, candle) {
     gross: null, fees: null, net: null, outcome: null,
     holdMinutes: null,
     // Validation
-    fillConfirmed:  false,
-    candleLowAtFill: null,
-    candleHighAtTP:  null,
-    fillPrice:       null,
-    fillTime:        null,
+    fillConfirmed:    false,
+    filledAtCandleTs: null,   // set on fill; TP/SL only fire on candles AFTER this
+    candleLowAtFill:  null,
+    candleHighAtTP:   null,
+    fillPrice:        null,
+    fillTime:         null,
   };
 }
 
@@ -631,12 +632,15 @@ async function processSym(sym) {
   // position, keep watching price until SL or TP is hit rather than exiting at
   // market mid-trade for a fee-only loss.
   if (st.openLong && st.openLong.fillConfirmed && !st.inOsc) {
-    const orphanHigh = Math.max(...raw.slice(-3).map(c => c.high));
-    const orphanLow  = Math.min(...raw.slice(-3).map(c => c.low));
-    if (orphanHigh >= st.openLong.target) {
-      closeTrade(sym, st.openLong.target, 'TP', orphanHigh);
-    } else if (orphanLow <= st.openLong.sl) {
-      closeTrade(sym, st.openLong.sl, 'SL', null);
+    const opfC = raw.filter(c => c.ts > st.openLong.filledAtCandleTs);
+    if (opfC.length > 0) {
+      const opfHigh = Math.max(...opfC.map(c => c.high));
+      const opfLow  = Math.min(...opfC.map(c => c.low));
+      if (opfHigh >= st.openLong.target) {
+        closeTrade(sym, st.openLong.target, 'TP', opfHigh);
+      } else if (opfLow <= st.openLong.sl) {
+        closeTrade(sym, st.openLong.sl, 'SL', null);
+      }
     }
     return;  // open position takes priority; re-arm on next candle after it resolves
   }
@@ -694,23 +698,31 @@ async function processSym(sym) {
           st.inOsc    = false;
           st.action   = 'NO_TRADE';
         } else {
-          st.openLong.fillConfirmed   = true;
-          st.openLong.candleLowAtFill = recentLow;
-          st.openLong.fillPrice       = st.openLong.entry;
-          st.openLong.fillTime        = fmtTime(Date.now());
+          st.openLong.fillConfirmed    = true;
+          st.openLong.filledAtCandleTs = last.ts;
+          st.openLong.candleLowAtFill  = recentLow;
+          st.openLong.fillPrice        = st.openLong.entry;
+          st.openLong.fillTime         = fmtTime(Date.now());
         }
       }
       if (st.openLong && st.openLong.fillConfirmed) {
-        if (recentHigh >= st.openLong.target) {
-          closeTrade(sym, st.openLong.target, 'TP', recentHigh);
-          st.action = 'SAME_TRADE';
-          if (last.close >= st.oscLower && !inBlackout()) {
-            openTrade(sym, st.oscLower, st.oscUpper, st.oscLower - 2 * st.tick, last.close, last);
+        // Only use candles AFTER the fill candle — prevents the same fill-candle's
+        // high/low from immediately re-triggering TP/SL and looping SAME_TRADE.
+        const pfC = raw.filter(c => c.ts > st.openLong.filledAtCandleTs);
+        if (pfC.length > 0) {
+          const pfHigh = Math.max(...pfC.map(c => c.high));
+          const pfLow  = Math.min(...pfC.map(c => c.low));
+          if (pfHigh >= st.openLong.target) {
+            closeTrade(sym, st.openLong.target, 'TP', pfHigh);
+            st.action = 'SAME_TRADE';
+            if (last.close >= st.oscLower && !inBlackout()) {
+              openTrade(sym, st.oscLower, st.oscUpper, st.oscLower - 2 * st.tick, last.close, last);
+            }
+          } else if (pfLow <= st.openLong.sl) {
+            closeTrade(sym, st.openLong.sl, 'SL', null);
+            st.inOsc  = false;
+            st.action = 'NO_TRADE';
           }
-        } else if (recentLow <= st.openLong.sl) {
-          closeTrade(sym, st.openLong.sl, 'SL', null);
-          st.inOsc  = false;
-          st.action = 'NO_TRADE';
         }
       }
     } else if (last.close >= st.oscLower && !inBlackout()) {
@@ -723,16 +735,19 @@ async function processSym(sym) {
     // hit — the grace period should never shield a real loss. Check SL (and TP)
     // immediately before touching the grace counter.
     if (st.openLong && st.openLong.fillConfirmed) {
-      const graceLow  = Math.min(...raw.slice(-3).map(c => c.low));
-      const graceHigh = Math.max(...raw.slice(-3).map(c => c.high));
-      if (graceHigh >= st.openLong.target) {
-        closeTrade(sym, st.openLong.target, 'TP', graceHigh);
-        st.inOsc = false; st.oscBreakCount = 0; st.action = 'NO_TRADE';
-        return;
-      } else if (graceLow <= st.openLong.sl) {
-        closeTrade(sym, st.openLong.sl, 'SL', null);
-        st.inOsc = false; st.oscBreakCount = 0; st.action = 'NO_TRADE';
-        return;
+      const gpfC = raw.filter(c => c.ts > st.openLong.filledAtCandleTs);
+      if (gpfC.length > 0) {
+        const gpfHigh = Math.max(...gpfC.map(c => c.high));
+        const gpfLow  = Math.min(...gpfC.map(c => c.low));
+        if (gpfHigh >= st.openLong.target) {
+          closeTrade(sym, st.openLong.target, 'TP', gpfHigh);
+          st.inOsc = false; st.oscBreakCount = 0; st.action = 'NO_TRADE';
+          return;
+        } else if (gpfLow <= st.openLong.sl) {
+          closeTrade(sym, st.openLong.sl, 'SL', null);
+          st.inOsc = false; st.oscBreakCount = 0; st.action = 'NO_TRADE';
+          return;
+        }
       }
     }
     // Grace buffer: require 2 consecutive *closed candles* without detection before
