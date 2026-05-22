@@ -414,7 +414,7 @@ const state = {};
 SYMBOLS.forEach(s => {
   state[s] = {
     candles: [], tick: 0.0001,
-    inOsc: false, oscUpper: 0, oscLower: 0, oscCount: 0,
+    inOsc: false, oscUpper: 0, oscLower: 0, oscCount: 0, oscBreakCount: 0,
     prevOscUpper: 0, prevOscLower: 0,
     initialOscWidth: 0,
     openLong: null, action: 'WAIT',
@@ -498,11 +498,13 @@ function inferTick(c) {
 
 function detectOsc(candles, tick) {
   if (candles.length < MIN_CANDLES) return null;
-  // Condition 1: highest high − lowest low across last 10 candles ≤ 3 ticks
-  const win = candles.slice(-MIN_CANDLES);
-  const wh  = Math.max(...win.map(x => x.high));
-  const wl  = Math.min(...win.map(x => x.low));
-  if ((wh - wl) > TICK_WINDOW * tick) return null;
+  // Condition 1: range of last 10 CLOSE prices ≤ TICK_WINDOW ticks.
+  // Deliberately using closes, not wick highs/lows — a single candle's
+  // wick poking outside the range should not disqualify a valid consolidation.
+  const win    = candles.slice(-MIN_CANDLES);
+  const closeH = Math.max(...win.map(x => x.close));
+  const closeL = Math.min(...win.map(x => x.close));
+  if ((closeH - closeL) > TICK_WINDOW * tick) return null;
   // Condition 2: at least 3 of the last 5 closes cluster within 2 ticks of each other
   const closes = candles.slice(-CLUSTER_WIN).map(x => x.close).sort((a, b) => a - b);
   let clustered = false;
@@ -510,7 +512,9 @@ function detectOsc(candles, tick) {
     if (closes[i + CLUSTER_MIN - 1] - closes[i] <= tick * 2) { clustered = true; break; }
   }
   if (!clustered) return null;
-  return { upper: wh, lower: wl };
+  // Return close-based band — entry and TP anchor to where price is settling,
+  // not to wick extremes that may never be revisited.
+  return { upper: closeH, lower: closeL };
 }
 
 // ── P&L CALC ─────────────────────────────────────────────────────────────────
@@ -620,6 +624,7 @@ async function processSym(sym) {
     }
 
   } else if (osc && st.inOsc) {
+    st.oscBreakCount = 0;  // oscillation re-confirmed — clear any grace countdown
     // Compute actual recent activity first — this is where price IS bouncing right now.
     // Using last 3 candles instead of detectOsc's 10-candle extreme window, which stays
     // wide until old extreme candles age out (~9 more polls after tightening begins).
@@ -681,13 +686,19 @@ async function processSym(sym) {
     }
 
   } else if (!osc && st.inOsc) {
-    st.inOsc  = false;
-    st.action = 'NO_TRADE';
-    if (st.openLong) {
-      if (st.openLong.fillConfirmed) {
-        closeTrade(sym, last.close, 'BREAK', null);  // real fill — close at market
-      } else {
-        st.openLong = null;  // limit order never touched — discard silently, no trade record
+    // Grace buffer: require 2 consecutive failed detections before resetting.
+    // One stray candle (gap, news spike) should not wipe an armed setup.
+    st.oscBreakCount = (st.oscBreakCount || 0) + 1;
+    if (st.oscBreakCount >= 2) {
+      st.inOsc        = false;
+      st.oscBreakCount = 0;
+      st.action       = 'NO_TRADE';
+      if (st.openLong) {
+        if (st.openLong.fillConfirmed) {
+          closeTrade(sym, last.close, 'BREAK', null);  // real fill — close at market
+        } else {
+          st.openLong = null;  // limit order never touched — discard silently, no trade record
+        }
       }
     }
   }
