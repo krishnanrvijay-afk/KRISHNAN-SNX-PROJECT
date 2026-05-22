@@ -824,7 +824,10 @@ function renderTicker(sym) {
   if (isBlackout) {
     actionLabel = 'BLACKOUT — NO TRADE'; actionColor = '#ff3d3d';
   } else if (st.action === 'SAME_TRADE' && st.inOsc) {
-    actionLabel = 'SAME TRADE'; actionColor = '#00e676';
+    const fillStatus = st.openLong
+      ? (st.openLong.fillConfirmed ? ' · FILLED' : ' · AWAITING FILL')
+      : '';
+    actionLabel = 'SAME TRADE' + fillStatus; actionColor = '#00e676';
     actionE = fmtPrice(st.oscLower,st.tick); actionTP = fmtPrice(st.oscUpper,st.tick);
   } else if (st.action === 'NEW_SETUP' && st.inOsc) {
     actionLabel = 'NEW SETUP'; actionColor = '#00c8ff';
