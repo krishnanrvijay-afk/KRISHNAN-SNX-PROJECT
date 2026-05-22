@@ -701,6 +701,22 @@ async function processSym(sym) {
     }
 
   } else if (!osc && st.inOsc) {
+    // Even during the grace window, a filled trade must be stopped out if SL is
+    // hit — the grace period should never shield a real loss. Check SL (and TP)
+    // immediately before touching the grace counter.
+    if (st.openLong && st.openLong.fillConfirmed) {
+      const graceLow  = Math.min(...raw.slice(-3).map(c => c.low));
+      const graceHigh = Math.max(...raw.slice(-3).map(c => c.high));
+      if (graceHigh >= st.openLong.target) {
+        closeTrade(sym, st.openLong.target, 'TP', graceHigh);
+        st.inOsc = false; st.oscBreakCount = 0; st.action = 'NO_TRADE';
+        return;
+      } else if (graceLow <= st.openLong.sl) {
+        closeTrade(sym, st.openLong.sl, 'SL', null);
+        st.inOsc = false; st.oscBreakCount = 0; st.action = 'NO_TRADE';
+        return;
+      }
+    }
     // Grace buffer: require 2 consecutive failed detections before resetting.
     // One stray candle (gap, news spike) should not wipe an armed setup.
     st.oscBreakCount = (st.oscBreakCount || 0) + 1;
