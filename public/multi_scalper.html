@@ -402,6 +402,7 @@ const MIN_CANDLES = 6;     // range-check window: last 6 closes (focuses on curr
 const TICK_WINDOW = 3;
 const CLUSTER_WIN  = 5;   // last N closes checked for clustering
 const CLUSTER_MIN  = 4;   // minimum closes that must cluster within 2 ticks (tighter to compensate for shorter range window)
+const MAX_HOLD_CANDLES = 5;   // force-exit (market close) after this many post-fill candles with no TP/SL hit
 const BLACKOUT_H  = [9, 10];
 
 // ── STATE ─────────────────────────────────────────────────────────────────────
@@ -509,7 +510,7 @@ function detectOsc(candles, tick) {
   const win    = candles.slice(-MIN_CANDLES);
   const closeH = Math.max(...win.map(x => x.close));
   const closeL = Math.min(...win.map(x => x.close));
-  if ((closeH - closeL) > TICK_WINDOW * tick) return null;
+  if (Math.round((closeH - closeL) / tick) > TICK_WINDOW) return null;
   // Condition 2: at least 3 of the last 5 closes cluster within 2 ticks of each other
   const closes = candles.slice(-CLUSTER_WIN).map(x => x.close).sort((a, b) => a - b);
   let clustered = false;
@@ -690,6 +691,18 @@ async function processSym(sym) {
         st.openLong.bandUpper = recentHigh;
         st.openLong.bandTicks = Math.round(recentWidth / st.tick);
       }
+    } else if ((!st.openLong || !st.openLong.fillConfirmed) && Math.abs(osc.lower - st.oscLower) >= st.tick) {
+      // Band drifted by ≥1 tick without narrowing — track it for unfilled trades
+      st.oscUpper = osc.upper;
+      st.oscLower = osc.lower;
+      if (st.openLong) {
+        st.openLong.entry     = osc.lower;
+        st.openLong.target    = osc.upper;
+        st.openLong.sl        = osc.lower - 2 * st.tick;
+        st.openLong.bandLower = osc.lower;
+        st.openLong.bandUpper = osc.upper;
+        st.openLong.bandTicks = Math.round((osc.upper - osc.lower) / st.tick);
+      }
     }
 
     if (st.openLong) {
@@ -737,6 +750,10 @@ async function processSym(sym) {
             }
           } else if (pfLow <= st.openLong.sl) {
             closeTrade(sym, st.openLong.sl, 'SL', null);
+            st.inOsc  = false;
+            st.action = 'NO_TRADE';
+          } else if (pfC.length >= MAX_HOLD_CANDLES) {
+            closeTrade(sym, last.close, 'TIMEOUT', null);
             st.inOsc  = false;
             st.action = 'NO_TRADE';
           }
@@ -1019,7 +1036,7 @@ function renderFullLog() {
       '<td><span class="trade-type '+ttcls+'">'+t.tradeType+'</span></td>' +
       '<td class="yellow">'+fmtPrice(t.entry,tick)+'</td>' +
       '<td>'+(t.exit ? fmtPrice(t.exit,tick) : '<span style="color:var(--muted)">—</span>')+'</td>' +
-      '<td style="color:'+(t.exitReason==='TP'?'var(--green)':t.exitReason==='SL'?'var(--red)':'var(--muted)')+'">'+
+      '<td style="color:'+(t.exitReason==='TP'?'var(--green)':t.exitReason==='SL'?'var(--red)':t.exitReason==='TIMEOUT'?'var(--yellow)':'var(--muted)')+'">'+
         (t.exitReason||'OPEN')+
       '</td>' +
       '<td style="font-weight:700;color:'+cls+'">'+fmtPnl(t.net||0)+'</td>' +
