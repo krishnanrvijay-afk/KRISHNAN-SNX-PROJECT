@@ -691,8 +691,11 @@ async function processSym(sym) {
         st.openLong.bandUpper = recentHigh;
         st.openLong.bandTicks = Math.round(recentWidth / st.tick);
       }
-    } else if ((!st.openLong || !st.openLong.fillConfirmed) && Math.abs(osc.lower - st.oscLower) >= st.tick) {
-      // Band drifted by ≥1 tick without narrowing — track it for unfilled trades
+    } else if ((!st.openLong || !st.openLong.fillConfirmed) && osc.lower < st.oscLower && Math.abs(osc.lower - st.oscLower) >= st.tick) {
+      // Band drifted DOWNWARD by ≥1 tick — track it for unfilled trades.
+      // Upward drift is intentionally ignored: a re-arm must never fill at or above
+      // the previous TP level. If the band shifts up, the re-arm holds its original
+      // entry and waits; grace will expire it if the level is never revisited.
       st.oscUpper = osc.upper;
       st.oscLower = osc.lower;
       if (st.openLong) {
