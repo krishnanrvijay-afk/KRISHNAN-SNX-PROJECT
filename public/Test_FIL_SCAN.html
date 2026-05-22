@@ -561,23 +561,36 @@ function closeTrade(sym, exitPrice, reason, candleHigh) {
   st.openLong = null;
 }
 
+// ── CANDLE MERGE ──────────────────────────────────────────────────────────────
+function mergeCandles(stored, fresh) {
+  const map = new Map();
+  stored.forEach(c => map.set(c.ts, c));
+  fresh.forEach(c => map.set(c.ts, c)); // fresh overwrites — live candle updates
+  return Array.from(map.values()).sort((a, b) => a.ts - b.ts).slice(-25);
+}
+
 // ── PROCESS CANDLE (with diagnostics) ─────────────────────────────────────────
 let pollCount = 0;
 
 async function processSym(sym) {
   pollCount++;
-  const p = pollCount;  // step prefix for this poll cycle
+  const p  = pollCount;
+  const st = state[sym];
 
-  diagPush(p+'.1', 'POLL START', 'fetching 25 candles...', 'muted');
+  // First poll seeds 25 candles; every poll after fetches only 4 (live candle
+  // + 3 prior) and merges into stored history — detectOsc always has 10+.
+  const limit = st.candles.length >= 25 ? 4 : 25;
 
-  const raw = await fetchCandles(sym, 25);
+  diagPush(p+'.1', 'POLL START', 'fetching ' + limit + ' candles' + (limit===4?' (incremental, history in memory)':'  (seed)'), 'muted');
 
-  if (!raw.length) {
+  const fresh = await fetchCandles(sym, limit);
+
+  if (!fresh.length) {
     diagPush(p+'.2', 'FETCH RESULT', 'NO DATA — skipped', 'bad');
     return;
   }
 
-  const st   = state[sym];
+  const raw  = limit === 4 ? mergeCandles(st.candles, fresh) : fresh;
   st.candles = raw;
   st.tick    = inferTick(raw);
   const last = raw[raw.length - 1];
@@ -586,7 +599,7 @@ async function processSym(sym) {
   const dayLow  = Math.min(...raw.map(c => c.low));
   st.dayRange   = (dayHigh - dayLow) / dayLow * 100;
 
-  diagPush(p+'.2', 'CANDLES FETCHED', raw.length + ' candles ok', 'ok');
+  diagPush(p+'.2', 'CANDLES FETCHED', raw.length + ' in window · fetched ' + fresh.length, 'ok');
   diagPush(p+'.3', 'LAST CANDLE TS',  fmtTime(last.ts) + ' EDT', 'info');
   diagPush(p+'.4', 'LAST CLOSE',      fmtPrice(last.close, st.tick), 'info');
   diagPush(p+'.5', 'TICK SIZE',       st.tick.toFixed(5), 'info');
