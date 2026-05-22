@@ -590,11 +590,26 @@ function closeTrade(sym, exitPrice, reason, candleHigh) {
   st.openLong = null;
 }
 
+// ── CANDLE MERGE ─────────────────────────────────────────────────────────────
+// Merge a small fresh batch into the stored candle array, deduplicated by ts.
+// The live (last) candle's close updates until it closes, so fresh always wins.
+function mergeCandles(stored, fresh) {
+  const map = new Map();
+  stored.forEach(c => map.set(c.ts, c));
+  fresh.forEach(c => map.set(c.ts, c));
+  return Array.from(map.values()).sort((a, b) => a.ts - b.ts).slice(-25);
+}
+
 // ── PROCESS CANDLE ────────────────────────────────────────────────────────────
 async function processSym(sym) {
-  const raw = await fetchCandles(sym, 25);
-  if (!raw.length) return;
   const st    = state[sym];
+  // First call seeds history with 25 candles; after that only 4 are needed —
+  // the live candle + 3 preceding ones to update the sliding window. The full
+  // history stays in st.candles so detectOsc (needs 10) always has enough data.
+  const limit = st.candles.length >= 25 ? 4 : 25;
+  const fresh = await fetchCandles(sym, limit);
+  if (!fresh.length) return;
+  const raw   = limit === 4 ? mergeCandles(st.candles, fresh) : fresh;
   st.candles  = raw;
   st.tick     = inferTick(raw);
   const last  = raw[raw.length - 1];
