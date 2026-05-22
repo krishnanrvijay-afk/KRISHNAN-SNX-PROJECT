@@ -398,10 +398,10 @@ const MAKER_FEE   = 0;
 const POLL_MS     = 10000;
 const DEPTH_POLL  = 30000;
 const CANDLE_INT  = 'Min1';
-const MIN_CANDLES = 10;
+const MIN_CANDLES = 6;     // range-check window: last 6 closes (focuses on current zone, not the drift into it)
 const TICK_WINDOW = 3;
 const CLUSTER_WIN  = 5;   // last N closes checked for clustering
-const CLUSTER_MIN  = 3;   // minimum closes that must cluster within 2 ticks
+const CLUSTER_MIN  = 4;   // minimum closes that must cluster within 2 ticks (tighter to compensate for shorter range window)
 const BLACKOUT_H  = [9, 10];
 
 // ── STATE ─────────────────────────────────────────────────────────────────────
