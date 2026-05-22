@@ -608,6 +608,21 @@ async function processSym(sym) {
 
   const osc = detectOsc(raw, st.tick);
 
+  // Orphan-trade handler: once a trade is filled, SL and TP govern the exit —
+  // not the oscillation state. If the pattern broke while we were in a confirmed
+  // position, keep watching price until SL or TP is hit rather than exiting at
+  // market mid-trade for a fee-only loss.
+  if (st.openLong && st.openLong.fillConfirmed && !st.inOsc) {
+    const orphanHigh = Math.max(...raw.slice(-3).map(c => c.high));
+    const orphanLow  = Math.min(...raw.slice(-3).map(c => c.low));
+    if (orphanHigh >= st.openLong.target) {
+      closeTrade(sym, st.openLong.target, 'TP', orphanHigh);
+    } else if (orphanLow <= st.openLong.sl) {
+      closeTrade(sym, st.openLong.sl, 'SL', null);
+    }
+    return;  // open position takes priority; re-arm on next candle after it resolves
+  }
+
   if (osc && !st.inOsc) {
     const isNew = st.prevOscLower !== osc.lower || st.prevOscUpper !== osc.upper;
     st.inOsc          = true;
@@ -690,14 +705,18 @@ async function processSym(sym) {
     // One stray candle (gap, news spike) should not wipe an armed setup.
     st.oscBreakCount = (st.oscBreakCount || 0) + 1;
     if (st.oscBreakCount >= 2) {
-      st.inOsc        = false;
+      st.inOsc         = false;
       st.oscBreakCount = 0;
-      st.action       = 'NO_TRADE';
+      st.action        = 'NO_TRADE';
       if (st.openLong) {
         if (st.openLong.fillConfirmed) {
-          closeTrade(sym, last.close, 'BREAK', null);  // real fill — close at market
+          // Filled trade: do NOT exit at market. The orphan-trade handler above
+          // will keep watching SL/TP on every subsequent candle until the trade
+          // resolves naturally. Exiting at market here produces a fee-only loss
+          // even when price hasn't violated SL.
+          // (leave st.openLong intact — orphan handler takes over)
         } else {
-          st.openLong = null;  // limit order never touched — discard silently, no trade record
+          st.openLong = null;  // unfilled limit — discard silently, no trade record
         }
       }
     }
