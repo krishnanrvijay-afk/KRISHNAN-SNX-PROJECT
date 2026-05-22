@@ -406,8 +406,11 @@ const BLACKOUT_H  = [9, 10];
 
 // ── STATE ─────────────────────────────────────────────────────────────────────
 function todayStartEDT() {
-  const now = new Date(Date.now() - getEasternOffset() * 3600000);
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).getTime() + getEasternOffset() * 3600000;
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).formatToParts(now);
+  const get = t => +parts.find(p=>p.type===t).value;
+  const elapsedMs = ((get('hour')*60+get('minute'))*60+get('second'))*1000 + now.getMilliseconds();
+  return now.getTime() - elapsedMs;
 }
 
 const state = {};
@@ -429,17 +432,19 @@ let allTrades = [];
 let currentDetailId = null;
 
 // ── TIME ──────────────────────────────────────────────────────────────────────
-function getEasternOffset() {
-  const now = new Date();
-  const jan = new Date(now.getFullYear(), 0, 1);
-  const jul = new Date(now.getFullYear(), 6, 1);
-  const std = Math.max(jan.getTimezoneOffset(), jul.getTimezoneOffset());
-  return now.getTimezoneOffset() < std ? 4 : 5;
+function edtHour() {
+  return parseInt(new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',hour:'numeric',hour12:false}).format(new Date()),10);
 }
-function nowEDT() { return new Date(Date.now() - getEasternOffset() * 3600000); }
-function edtHour() { return nowEDT().getUTCHours(); }
-function fmtTime(ms) { return new Date(ms - getEasternOffset()*3600000).toISOString().slice(11,16); }
-function fmtDateTime(ms) { return new Date(ms - getEasternOffset()*3600000).toISOString().slice(0,16).replace('T',' '); }
+function nyTzName() {
+  const s = new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',timeZoneName:'short'}).format(new Date());
+  return (s.match(/\b(E[DS]T)\b/)||['','EDT'])[1];
+}
+function fmtTime(ms) {
+  return new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(ms));
+}
+function fmtDateTime(ms) {
+  return new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(ms)).replace(',','');
+}
 function inBlackout() { return BLACKOUT_H.includes(edtHour()); }
 function sessionName(h) {
   if (h < 3) return 'Asia'; if (h < 9) return 'London';
@@ -786,12 +791,8 @@ async function processSym(sym) {
 
 // ── RENDER CLOCK ──────────────────────────────────────────────────────────────
 function renderClock() {
-  const t  = nowEDT();
-  const h  = String(t.getUTCHours()).padStart(2,'0');
-  const m  = String(t.getUTCMinutes()).padStart(2,'0');
-  const s  = String(t.getUTCSeconds()).padStart(2,'0');
-  const tz = getEasternOffset() === 4 ? 'EDT' : 'EST';
-  document.getElementById('clock').textContent = h+':'+m+':'+s+' '+tz;
+  const timeStr = new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(new Date());
+  document.getElementById('clock').textContent = timeStr + ' ' + nyTzName();
   document.getElementById('sessionLabel').textContent = sessionName(edtHour());
 }
 
