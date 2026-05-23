@@ -325,7 +325,7 @@ window.onerror = function(msg, src, line) {
 const TOKEN_CONFIG = {
   FILUSDT: {
     margin: 1000, leverage: 50, notional: 50000, contractSize: 0.01,
-    bestHours: [0,1,14,15], label: 'FIL'
+    bestHours: [0,1,14,15], label: 'FIL', tick: 0.001
   },
 };
 const SYMBOLS        = ['FILUSDT'];
@@ -455,7 +455,7 @@ function sessionName(h) {
 }
 
 // ── UTILS ─────────────────────────────────────────────────────────────────────
-function fmtPnl(v) { return (v >= 0 ? '+' : '') + '$' + Math.abs(v).toFixed(2); }
+function fmtPnl(v) { return (v >= 0 ? '+' : '-') + '$' + Math.abs(v).toFixed(2); }
 function fmtPrice(v, tick) {
   if (!v) return '--';
   const dec = tick < 0.0002 ? 5 : tick < 0.002 ? 4 : 3;
@@ -654,7 +654,12 @@ function updateShadowBuffer(sym, price) {
   if (st.shadowCount >= CONFIRM_COUNT) {
     const lower = +(Math.min(...st.shadowBuffer).toFixed(7));
     const upper = +(lower + st.tick).toFixed(7);
-    dp(p+'.SD3', 'SHADOW CONFIRMED', fmtPrice(lower,st.tick)+' – '+fmtPrice(upper,st.tick)+' → MIGRATE', 'ok');
+    const distinct = new Set(st.shadowBuffer.map(v => v.toFixed(7))).size;
+    if (distinct < 2) {
+      dp(p+'.SD3', 'SHADOW REJECTED', 'all '+CONFIRM_COUNT+' shadow closes identical — flat drift, need 2 distinct prices', 'warn');
+      return null;
+    }
+    dp(p+'.SD3', 'SHADOW CONFIRMED', fmtPrice(lower,st.tick)+' – '+fmtPrice(upper,st.tick)+' → MIGRATE ('+distinct+' distinct)', 'ok');
     return { lower, upper };
   }
   return null;
@@ -720,8 +725,13 @@ function updateTickPair(sym, candle) {
   if (st.tpCount >= CONFIRM_COUNT) {
     const lower = +(Math.min(...st.tpBuffer)).toFixed(7);
     const upper = +(lower + st.tick).toFixed(7);
+    const distinct = new Set(st.tpBuffer.map(v => v.toFixed(7))).size;
+    if (distinct < 2) {
+      dp(p+'.TP3', 'BAND REJECTED', 'all '+CONFIRM_COUNT+' closes identical ('+fmtPrice(lower,st.tick)+') — flat market, need 2 distinct prices', 'warn');
+      return null;
+    }
     dp(p+'.TP3', 'BAND CONFIRMED',
-      fmtPrice(lower,st.tick)+' – '+fmtPrice(upper,st.tick)+' ('+CONFIRM_COUNT+'c within 1 tick)', 'ok');
+      fmtPrice(lower,st.tick)+' – '+fmtPrice(upper,st.tick)+' ('+CONFIRM_COUNT+'c within 1 tick, '+distinct+' distinct)', 'ok');
     return { confirmed: true, lower, upper };
   }
 
@@ -742,7 +752,7 @@ async function processSym(sym) {
 
   const raw  = limit === 4 ? mergeCandles(st.candles, fresh) : fresh;
   st.candles = raw;
-  st.tick    = inferTick(raw);
+  st.tick    = TOKEN_CONFIG[sym].tick || inferTick(raw);
   const last = raw[raw.length - 1];
   st.lastPrice = last.close;
   const dayHigh = Math.max(...raw.map(c => c.high));
@@ -851,9 +861,9 @@ async function processSym(sym) {
           if (!inBlackout()) openShort(sym, last);
           return;
         }
-        if (last.close < lng.sl) {
+        if (last.close <= lng.sl) {
           st.inDrift = false; st.shadowBuffer = []; st.shadowCount = 0; st.unrPnl = 0;
-          dp(p+'.14', 'LONG SL IMMEDIATE', fmtPrice(last.close,st.tick)+' < '+fmtPrice(lng.sl,st.tick)+' → LOSS (fill candle)', 'bad');
+          dp(p+'.14', 'LONG SL IMMEDIATE', fmtPrice(last.close,st.tick)+' <= '+fmtPrice(lng.sl,st.tick)+' → LOSS (fill candle)', 'bad');
           closeTrade(sym, lng, lng.sl, 'SL');
           resetBand(sym, 'long SL immediate — band broken');
           return;
@@ -917,11 +927,12 @@ async function processSym(sym) {
               st.unrPnl       = 0;
               if (!inBlackout()) openLong(sym, last);
             }
-          } else if (st.inDrift && cp >= st.oscLower) {
-            // Price recovered to break-even — scratch the trade at 0.00 PNL and reset
-            dp(p+'.DR1', 'DRIFT SCRATCH', 'price back to '+fmtPrice(cp,st.tick)+' → scratch @ 0.00 · reset band', 'ok');
-            closeTrade(sym, lng, cp, 'SCRATCH');
-            resetBand(sym, 'drift scratch — break-even exit · fresh band search');
+          } else if (st.inDrift && cp >= st.oscLower && cp < st.oscUpper) {
+            // Price recovered to entry level — scratch at entry ($0.00) and re-arm same band
+            dp(p+'.DR1', 'DRIFT RECOVERY', 'price back to '+fmtPrice(cp,st.tick)+' → scratch @ entry · re-arm same band', 'ok');
+            closeTrade(sym, lng, lng.entry, 'SCRATCH');
+            st.inDrift = false; st.shadowBuffer = []; st.shadowCount = 0; st.unrPnl = 0;
+            if (!inBlackout()) openLong(sym, last);
           }
         }
       }
@@ -988,9 +999,9 @@ async function processSym(sym) {
           if (!inBlackout()) openLong(sym, last);
           return;
         }
-        if (last.close > sht.sl) {
+        if (last.close >= sht.sl) {
           st.inDrift = false; st.shadowBuffer = []; st.shadowCount = 0; st.unrPnl = 0;
-          dp(p+'.14', 'SHORT SL IMMEDIATE', fmtPrice(last.close,st.tick)+' > '+fmtPrice(sht.sl,st.tick)+' → LOSS (fill candle)', 'bad');
+          dp(p+'.14', 'SHORT SL IMMEDIATE', fmtPrice(last.close,st.tick)+' >= '+fmtPrice(sht.sl,st.tick)+' → LOSS (fill candle)', 'bad');
           closeTrade(sym, sht, sht.sl, 'SL');
           resetBand(sym, 'short SL immediate — band broken');
           return;
@@ -1054,11 +1065,12 @@ async function processSym(sym) {
               st.unrPnl       = 0;
               if (!inBlackout()) openShort(sym, last);
             }
-          } else if (st.inDrift && cp <= st.oscUpper) {
-            // Price recovered to break-even — scratch the trade at 0.00 PNL and reset
-            dp(p+'.DR1', 'DRIFT SCRATCH', 'price back to '+fmtPrice(cp,st.tick)+' → scratch @ 0.00 · reset band', 'ok');
-            closeTrade(sym, sht, cp, 'SCRATCH');
-            resetBand(sym, 'drift scratch — break-even exit · fresh band search');
+          } else if (st.inDrift && cp <= st.oscUpper && cp > st.oscLower) {
+            // Price recovered to entry level — scratch at entry ($0.00) and re-arm same band
+            dp(p+'.DR1', 'DRIFT RECOVERY', 'price back to '+fmtPrice(cp,st.tick)+' → scratch @ entry · re-arm same band', 'ok');
+            closeTrade(sym, sht, sht.entry, 'SCRATCH');
+            st.inDrift = false; st.shadowBuffer = []; st.shadowCount = 0; st.unrPnl = 0;
+            if (!inBlackout()) openShort(sym, last);
           }
         }
       }
