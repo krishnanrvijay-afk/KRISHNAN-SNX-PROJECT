@@ -125,6 +125,15 @@
   .tick-dot.confirmed { background: #00e676; border-color: #00e676; box-shadow: 0 0 8px #00e676; }
   .tick-count-label { font-family: 'Bebas Neue', sans-serif; font-size: 14px; letter-spacing: 1px; color: #fff; font-weight: 700; margin-left: 6px; }
 
+  /* ── UNREALIZED PNL ROW ── */
+  .bp-unr-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 14px; border-bottom: 1px dashed #222; }
+  .bp-unr-label { font-size: 12px; font-weight: 700; color: #fff; font-family: 'JetBrains Mono', monospace; text-transform: uppercase; letter-spacing: 1px; }
+  .bp-unr-value { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 1px; }
+  .bp-drift-badge { background: rgba(255,215,64,0.15); color: #ffd740; border: 1px solid rgba(255,215,64,0.4); border-radius: 3px; font-family: 'JetBrains Mono', monospace; font-size: 9px; padding: 2px 6px; margin-left: 8px; letter-spacing: 1px; vertical-align: middle; }
+  .bp-shadow-strip { display: flex; gap: 8px; padding: 4px 14px 8px; align-items: center; border-top: 1px solid rgba(255,215,64,0.12); }
+  .tick-dot.shadow { background: #ffd740; border-color: #ffd740; box-shadow: 0 0 6px #ffd740; }
+  .shadow-count-label { font-family: 'Bebas Neue', sans-serif; font-size: 13px; letter-spacing: 1px; color: #ffd740; font-weight: 700; margin-left: 6px; }
+
   /* ── TRADE LOG TABLE ── */
   .log-table { width: 100%; border-collapse: collapse; font-family: 'JetBrains Mono', monospace; font-size: 11px; }
   .log-table th { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; padding: 4px 6px; text-align: left; border-bottom: 1px solid var(--border); font-weight: 700; }
@@ -413,6 +422,13 @@ SYMBOLS.forEach(s => {
     lastPrice: 0, lastCandleTs: null, dayRange: 0,
     depth: null,
     action: 'WAIT',
+    // drift / band-migration state
+    inDrift:      false,   // true when filled trade is 1 tick adverse but hard SL not yet hit
+    shadowBuffer: [],      // secondary tick-pair buffer running during drift
+    shadowCount:  0,       // progress toward new shadow band (0–CONFIRM_COUNT)
+    shadowPrice1: null,    // display field
+    shadowPrice2: null,    // display field
+    unrPnl:       0,       // live unrealized PNL ($) of open filled position
   };
 });
 
@@ -535,7 +551,7 @@ function buildTrade(sym, direction, entry, target, sl, detectionPrice, candle) {
 
 function openLong(sym, candle) {
   const st = state[sym];
-  const t  = buildTrade(sym, 'LONG', st.oscLower, st.oscUpper, st.oscLower - st.tick, candle ? candle.close : st.lastPrice, candle);
+  const t  = buildTrade(sym, 'LONG', st.oscLower, st.oscUpper, st.oscLower - 2 * st.tick, candle ? candle.close : st.lastPrice, candle);
   st.openLong  = t;
   st.openShort = null;
   st.activeDir = 'LONG';
@@ -544,7 +560,7 @@ function openLong(sym, candle) {
 
 function openShort(sym, candle) {
   const st = state[sym];
-  const t  = buildTrade(sym, 'SHORT', st.oscUpper, st.oscLower, st.oscUpper + st.tick, candle ? candle.close : st.lastPrice, candle);
+  const t  = buildTrade(sym, 'SHORT', st.oscUpper, st.oscLower, st.oscUpper + 2 * st.tick, candle ? candle.close : st.lastPrice, candle);
   st.openShort = t;
   st.openLong  = null;
   st.activeDir = 'SHORT';
@@ -590,6 +606,58 @@ function resetBand(sym, reason) {
   st.cycleTradeCount = 0;
   st.activeDir       = 'LONG';
   st.action          = 'WAIT';
+  // clear drift state
+  st.inDrift         = false;
+  st.shadowBuffer    = [];
+  st.shadowCount     = 0;
+  st.shadowPrice1    = null;
+  st.shadowPrice2    = null;
+  st.unrPnl          = 0;
+}
+
+// ── SHADOW BUFFER (parallel tick-pair detection during drift) ─────────────────
+// Advances only on new candles.  Returns { lower, upper } when CONFIRM_COUNT
+// closes land within a 1-tick window, otherwise null.
+function updateShadowBuffer(sym, price) {
+  const st = state[sym];
+  const p  = pollCount;
+
+  if (!st.shadowBuffer) st.shadowBuffer = [];
+
+  // Check whether the new price fits in the current shadow window
+  if (st.shadowBuffer.length > 0) {
+    const bufMin = Math.min(...st.shadowBuffer);
+    const bufMax = Math.max(...st.shadowBuffer);
+    const newMin = Math.min(bufMin, price);
+    const newMax = Math.max(bufMax, price);
+    if (Math.round((newMax - newMin) / st.tick) > 1) {
+      // Price fell outside the 1-tick window — restart shadow at new price
+      st.shadowBuffer = [price];
+      st.shadowCount  = 1;
+      st.shadowPrice1 = price;
+      st.shadowPrice2 = null;
+      dp(p+'.SD1', 'SHADOW RESET', 'broke 1-tick window → restart @ '+fmtPrice(price,st.tick), 'muted');
+      return null;
+    }
+  }
+
+  st.shadowBuffer.push(price);
+  if (st.shadowBuffer.length > CONFIRM_COUNT) st.shadowBuffer.shift();
+  st.shadowCount  = st.shadowBuffer.length;
+  st.shadowPrice1 = st.shadowBuffer[0] || null;
+  st.shadowPrice2 = st.shadowBuffer[1] || null;
+
+  dp(p+'.SD2', 'SHADOW BUFFER',
+    st.shadowBuffer.map(v => fmtPrice(v, st.tick)).join(', ') + '  count='+st.shadowCount+'/'+CONFIRM_COUNT,
+    st.shadowCount >= CONFIRM_COUNT ? 'ok' : 'warn');
+
+  if (st.shadowCount >= CONFIRM_COUNT) {
+    const lower = +(Math.min(...st.shadowBuffer).toFixed(7));
+    const upper = +(lower + st.tick).toFixed(7);
+    dp(p+'.SD3', 'SHADOW CONFIRMED', fmtPrice(lower,st.tick)+' – '+fmtPrice(upper,st.tick)+' → MIGRATE', 'ok');
+    return { lower, upper };
+  }
+  return null;
 }
 
 // ── TICK-PAIR OSCILLATOR ───────────────────────────────────────────────────────
@@ -764,6 +832,11 @@ async function processSym(sym) {
 
       // Long is filled — check TP/SL on post-fill candles
       dp(p+'.13', 'LONG IN TRADE', 'TP='+fmtPrice(lng.target,st.tick)+' SL='+fmtPrice(lng.sl,st.tick), 'ok');
+
+      // Unrealized PNL — recalculate every poll while position is open
+      st.unrPnl = +(TOKEN_CONFIG[sym].notional * (last.close - lng.entry) / lng.entry).toFixed(2);
+      dp(p+'.13u', 'UNREALIZED PNL', fmtPnl(st.unrPnl)+' @ '+fmtPrice(last.close,st.tick), st.unrPnl >= 0 ? 'ok' : (st.inDrift ? 'warn' : 'info'));
+
       const pfC = raw.filter(c => c.ts > lng.filledAtCandleTs);
       if (!pfC.length) {
         dp(p+'.14', 'LONG WAITING', 'filled · next candle checks TP/SL', 'info');
@@ -775,17 +848,17 @@ async function processSym(sym) {
       dp(p+'.14', 'LONG POST-FILL', pfC.length+'c · hi='+fmtPrice(pfHigh,st.tick)+' lo='+fmtPrice(pfLow,st.tick), 'info');
 
       if (pfHigh >= lng.target) {
+        // TP — clear drift, flip to SHORT
+        st.inDrift = false; st.shadowBuffer = []; st.shadowCount = 0; st.unrPnl = 0;
         dp(p+'.15', 'LONG TP HIT', fmtPrice(pfHigh,st.tick)+' >= '+fmtPrice(lng.target,st.tick)+' → WIN', 'ok');
         closeTrade(sym, lng, lng.target, 'TP');
         st.cycleTradeCount++;
         dp(p+'.15b', 'CYCLE TP COUNT', st.cycleTradeCount, 'ok');
-        // Band intact — flip to SHORT
         st.activeDir = 'SHORT';
         st.action    = 'SHORT_ARMED';
-        if (!inBlackout()) {
-          openShort(sym, last);
-        }
+        if (!inBlackout()) openShort(sym, last);
       } else if (pfLow <= lng.sl) {
+        // Hard SL (now 2 ticks below band lower)
         dp(p+'.15', 'LONG SL HIT', fmtPrice(pfLow,st.tick)+' <= '+fmtPrice(lng.sl,st.tick)+' → LOSS · RESET', 'bad');
         closeTrade(sym, lng, lng.sl, 'SL');
         resetBand(sym, 'long SL hit — band broken');
@@ -796,6 +869,40 @@ async function processSym(sym) {
       } else {
         dp(p+'.15', 'LONG HOLDING', pfC.length+'/'+MAX_HOLD_CANDLES+'c · hi='+fmtPrice(pfHigh,st.tick)+' lo='+fmtPrice(pfLow,st.tick), 'warn');
         st.action = 'SAME_TRADE';
+
+        // ── DRIFT DETECTION (new candles only) ──────────────────────────────
+        // Drift zone: close is below oscLower (band broken) but above hard SL
+        if (isNewCandle) {
+          const cp = roundTick(last.close, st.tick);
+          if (cp < st.oscLower && cp > lng.sl) {
+            if (!st.inDrift) {
+              st.inDrift      = true;
+              st.shadowBuffer = [];
+              st.shadowCount  = 0;
+              dp(p+'.DR1', 'DRIFT START', 'price '+fmtPrice(cp,st.tick)+' below band '+fmtPrice(st.oscLower,st.tick)+' — shadow counting', 'warn');
+            }
+            dp(p+'.DR2', 'DRIFT STATUS', 'unr '+fmtPnl(st.unrPnl)+' · shadow '+st.shadowCount+'/'+CONFIRM_COUNT, 'warn');
+            const shadowResult = updateShadowBuffer(sym, cp);
+            if (shadowResult) {
+              // Shadow band confirmed — scratch current LONG and migrate band down
+              dp(p+'.DR4', 'BAND MIGRATE', 'scratch @ '+fmtPrice(cp,st.tick)+' → new band '+fmtPrice(shadowResult.lower,st.tick)+' – '+fmtPrice(shadowResult.upper,st.tick), 'ok');
+              closeTrade(sym, lng, cp, 'MIGRATE');
+              st.oscLower     = shadowResult.lower;
+              st.oscUpper     = shadowResult.upper;
+              st.inDrift      = false;
+              st.shadowBuffer = [];
+              st.shadowCount  = 0;
+              st.unrPnl       = 0;
+              if (!inBlackout()) openLong(sym, last);
+            }
+          } else if (st.inDrift && cp >= st.oscLower) {
+            // Price recovered back into original band — cancel drift
+            st.inDrift      = false;
+            st.shadowBuffer = [];
+            st.shadowCount  = 0;
+            dp(p+'.DR1', 'DRIFT CLEARED', 'price recovered to '+fmtPrice(cp,st.tick), 'ok');
+          }
+        }
       }
     }
 
@@ -841,6 +948,11 @@ async function processSym(sym) {
 
       // Short is filled — check TP/SL
       dp(p+'.13', 'SHORT IN TRADE', 'TP='+fmtPrice(sht.target,st.tick)+' SL='+fmtPrice(sht.sl,st.tick), 'purple');
+
+      // Unrealized PNL — recalculate every poll while position is open
+      st.unrPnl = +(TOKEN_CONFIG[sym].notional * (sht.entry - last.close) / sht.entry).toFixed(2);
+      dp(p+'.13u', 'UNREALIZED PNL', fmtPnl(st.unrPnl)+' @ '+fmtPrice(last.close,st.tick), st.unrPnl >= 0 ? 'ok' : (st.inDrift ? 'warn' : 'info'));
+
       const pfC = raw.filter(c => c.ts > sht.filledAtCandleTs);
       if (!pfC.length) {
         dp(p+'.14', 'SHORT WAITING', 'filled · next candle checks TP/SL', 'info');
@@ -852,17 +964,17 @@ async function processSym(sym) {
       dp(p+'.14', 'SHORT POST-FILL', pfC.length+'c · hi='+fmtPrice(pfHigh,st.tick)+' lo='+fmtPrice(pfLow,st.tick), 'info');
 
       if (pfLow <= sht.target) {
+        // TP — clear drift, flip to LONG
+        st.inDrift = false; st.shadowBuffer = []; st.shadowCount = 0; st.unrPnl = 0;
         dp(p+'.15', 'SHORT TP HIT', fmtPrice(pfLow,st.tick)+' <= '+fmtPrice(sht.target,st.tick)+' → WIN', 'ok');
         closeTrade(sym, sht, sht.target, 'TP');
         st.cycleTradeCount++;
         dp(p+'.15b', 'CYCLE TP COUNT', st.cycleTradeCount, 'ok');
-        // Cycle back to LONG
         st.activeDir = 'LONG';
         st.action    = 'ARMED';
-        if (!inBlackout()) {
-          openLong(sym, last);
-        }
+        if (!inBlackout()) openLong(sym, last);
       } else if (pfHigh >= sht.sl) {
+        // Hard SL (now 2 ticks above band upper)
         dp(p+'.15', 'SHORT SL HIT', fmtPrice(pfHigh,st.tick)+' >= '+fmtPrice(sht.sl,st.tick)+' → LOSS · RESET', 'bad');
         closeTrade(sym, sht, sht.sl, 'SL');
         resetBand(sym, 'short SL hit — band broken');
@@ -873,6 +985,40 @@ async function processSym(sym) {
       } else {
         dp(p+'.15', 'SHORT HOLDING', pfC.length+'/'+MAX_HOLD_CANDLES+'c · hi='+fmtPrice(pfHigh,st.tick)+' lo='+fmtPrice(pfLow,st.tick), 'warn');
         st.action = 'SHORT_FILLED';
+
+        // ── DRIFT DETECTION (new candles only) ──────────────────────────────
+        // Drift zone: close is above oscUpper (band broken) but below hard SL
+        if (isNewCandle) {
+          const cp = roundTick(last.close, st.tick);
+          if (cp > st.oscUpper && cp < sht.sl) {
+            if (!st.inDrift) {
+              st.inDrift      = true;
+              st.shadowBuffer = [];
+              st.shadowCount  = 0;
+              dp(p+'.DR1', 'DRIFT START', 'price '+fmtPrice(cp,st.tick)+' above band '+fmtPrice(st.oscUpper,st.tick)+' — shadow counting', 'warn');
+            }
+            dp(p+'.DR2', 'DRIFT STATUS', 'unr '+fmtPnl(st.unrPnl)+' · shadow '+st.shadowCount+'/'+CONFIRM_COUNT, 'warn');
+            const shadowResult = updateShadowBuffer(sym, cp);
+            if (shadowResult) {
+              // Shadow band confirmed — scratch current SHORT and migrate band up
+              dp(p+'.DR4', 'BAND MIGRATE', 'scratch @ '+fmtPrice(cp,st.tick)+' → new band '+fmtPrice(shadowResult.lower,st.tick)+' – '+fmtPrice(shadowResult.upper,st.tick), 'ok');
+              closeTrade(sym, sht, cp, 'MIGRATE');
+              st.oscLower     = shadowResult.lower;
+              st.oscUpper     = shadowResult.upper;
+              st.inDrift      = false;
+              st.shadowBuffer = [];
+              st.shadowCount  = 0;
+              st.unrPnl       = 0;
+              if (!inBlackout()) openShort(sym, last);
+            }
+          } else if (st.inDrift && cp <= st.oscUpper) {
+            // Price recovered back into original band — cancel drift
+            st.inDrift      = false;
+            st.shadowBuffer = [];
+            st.shadowCount  = 0;
+            dp(p+'.DR1', 'DRIFT CLEARED', 'price recovered to '+fmtPrice(cp,st.tick), 'ok');
+          }
+        }
       }
     }
   }
@@ -957,6 +1103,10 @@ function renderTicker(sym) {
   } else {
     badgeHtml = '<span class="badge badge-osc">OSC</span>';
   }
+  // Drift badge — appended when band migration is in progress
+  if (st.inDrift) {
+    badgeHtml += '<span class="badge" style="background:rgba(255,215,64,0.12);color:#ffd740;border:1px solid rgba(255,215,64,0.35);margin-left:4px">DRIFT</span>';
+  }
 
   // Tick-pair progress dots
   // Fix C: always use live tpCount for dots — reflects 0→3 on every cycle restart
@@ -967,10 +1117,37 @@ function renderTicker(sym) {
   }).join('');
   const tickStripHtml = '<div class="bp-tick-strip">' + dots +
     '<span class="tick-count-label">' +
-    (st.inOsc
-      ? 'BAND CONFIRMED ' + fmtPrice(st.oscLower,st.tick) + ' – ' + fmtPrice(st.oscUpper,st.tick)
-      : 'TICK-PAIR: ' + liveTpCount + ' / ' + CONFIRM_COUNT + ' SAME CLOSES') +
+    (st.inDrift
+      ? 'BAND DRIFT · SHADOW ' + st.shadowCount + '/' + CONFIRM_COUNT + ' @ ' + fmtPrice(st.oscLower - st.tick, st.tick) + '–' + fmtPrice(st.oscLower, st.tick)
+      : st.inOsc
+        ? 'BAND CONFIRMED ' + fmtPrice(st.oscLower,st.tick) + ' – ' + fmtPrice(st.oscUpper,st.tick)
+        : 'TICK-PAIR: ' + liveTpCount + ' / ' + CONFIRM_COUNT + ' SAME CLOSES') +
     '</span></div>';
+
+  // Shadow buffer dots (only visible during drift)
+  let shadowStripHtml = '';
+  if (st.inDrift) {
+    const sdots = Array.from({length: CONFIRM_COUNT}, (_,i) =>
+      '<div class="tick-dot' + (i < st.shadowCount ? ' shadow' : '') + '"></div>'
+    ).join('');
+    shadowStripHtml = '<div class="bp-shadow-strip">' + sdots +
+      '<span class="shadow-count-label">SHADOW ' + st.shadowCount + ' / ' + CONFIRM_COUNT + '</span>' +
+    '</div>';
+  }
+
+  // Unrealized PNL row (only when a trade is filled)
+  const activeTrade = (lng && lng.fillConfirmed) ? lng : (sht && sht.fillConfirmed) ? sht : null;
+  let unrHtml = '';
+  if (activeTrade) {
+    const unrCls   = st.unrPnl >= 0 ? 'var(--green)' : (st.inDrift ? '#ffd740' : 'var(--red)');
+    const driftTag = st.inDrift
+      ? '<span class="bp-drift-badge">DRIFT · SHADOW ' + st.shadowCount + '/' + CONFIRM_COUNT + '</span>'
+      : '';
+    unrHtml = '<div class="bp-unr-row">' +
+      '<span class="bp-unr-label">Unrealized' + driftTag + '</span>' +
+      '<span class="bp-unr-value" style="color:' + unrCls + '">' + fmtPnl(st.unrPnl) + '</span>' +
+    '</div>';
+  }
 
   // Price grid
   const today = st.trades.filter(t => t.ts >= st.sessionStart);
@@ -1068,6 +1245,8 @@ function renderTicker(sym) {
       '<div class="bp-badges">'+badgeHtml+'</div>' +
     '</div>' +
     tickStripHtml +
+    shadowStripHtml +
+    unrHtml +
     priceGrid +
     dualOrderHtml +
     metaHtml +
@@ -1264,6 +1443,12 @@ function clearAll() {
     st.cycleTradeCount  = 0;
     st.action           = 'WAIT';
     st.activeDir        = 'LONG';
+    st.inDrift          = false;
+    st.shadowBuffer     = [];
+    st.shadowCount      = 0;
+    st.shadowPrice1     = null;
+    st.shadowPrice2     = null;
+    st.unrPnl           = 0;
     localStorage.removeItem('test_fil_v2_'+s);
   });
   allTrades = [];
