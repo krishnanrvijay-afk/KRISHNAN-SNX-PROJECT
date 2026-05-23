@@ -833,7 +833,14 @@ async function processSym(sym) {
           lng.fillTime         = fmtTime(Date.now());
           dp(p+'.12', 'LONG FILLED', 'confirmed @ '+fmtPrice(lng.entry,st.tick), 'ok');
         } else {
-          dp(p+'.12', 'LONG PENDING', 'waiting for price to drop to '+fmtPrice(lng.entry,st.tick), 'muted');
+          const pendingCandles = raw.filter(c => c.ts > lng.openedAtCandleTs).length;
+          if (pendingCandles >= 3) {
+            dp(p+'.12', 'LONG TIMEOUT', 'no fill in 3 candles — cancelling pending order', 'bad');
+            st.openLong = null;
+            resetBand(sym, 'pending long expired — no fill in 3 candles');
+            return;
+          }
+          dp(p+'.12', 'LONG PENDING', 'waiting for price to drop to '+fmtPrice(lng.entry,st.tick)+' ('+pendingCandles+'/3c)', 'muted');
           st.action = 'ARMED';
           return;
         }
@@ -971,7 +978,14 @@ async function processSym(sym) {
           sht.fillTime         = fmtTime(Date.now());
           dp(p+'.12', 'SHORT FILLED', 'confirmed @ '+fmtPrice(sht.entry,st.tick), 'purple');
         } else {
-          dp(p+'.12', 'SHORT PENDING', 'waiting for price to rise to '+fmtPrice(sht.entry,st.tick), 'muted');
+          const pendingCandles = raw.filter(c => c.ts > sht.openedAtCandleTs).length;
+          if (pendingCandles >= 3) {
+            dp(p+'.12', 'SHORT TIMEOUT', 'no fill in 3 candles — cancelling pending order', 'bad');
+            st.openShort = null;
+            resetBand(sym, 'pending short expired — no fill in 3 candles');
+            return;
+          }
+          dp(p+'.12', 'SHORT PENDING', 'waiting for price to rise to '+fmtPrice(sht.entry,st.tick)+' ('+pendingCandles+'/3c)', 'muted');
           st.action = 'SHORT_ARMED';
           return;
         }
