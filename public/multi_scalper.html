@@ -27,7 +27,7 @@
 
   /* ── TABS ── */
   .tab-bar { display: flex; background: var(--surface); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 100; }
-  .tab { flex: 1; padding: 12px 6px; text-align: center; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.2s; }
+  .tab { flex: 1; padding: 12px 6px; text-align: center; font-family: 'Bebas Neue', sans-serif; font-size: 16px; font-weight: 400; text-transform: uppercase; letter-spacing: 2px; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.2s; }
   .tab.active { color: var(--green); border-bottom-color: var(--green); }
   .tab-content { display: none; padding: 10px; }
   .tab-content.active { display: block; }
@@ -46,7 +46,7 @@
 
   /* ── SESSION BAR ── */
   .session-bar { display: flex; gap: 3px; margin-bottom: 10px; }
-  .session-seg { flex: 1; height: 22px; border-radius: 3px; display: flex; align-items: center; justify-content: center; font-size: 8px; font-weight: 700; text-transform: uppercase; }
+  .session-seg { flex: 1; height: 26px; border-radius: 3px; display: flex; align-items: center; justify-content: center; font-family: 'Bebas Neue', sans-serif; font-size: 14px; letter-spacing: 1.5px; text-transform: uppercase; }
   .session-seg.active { outline: 2px solid var(--yellow); }
 
   /* ── BLACKOUT ── */
@@ -55,8 +55,8 @@
   /* ── COMBINED BAR ── */
   .combined { display: grid; grid-template-columns: repeat(4,1fr); gap: 6px; margin-bottom: 12px; }
   .cpill { background: var(--card); border: 1px solid var(--border); border-radius: 5px; padding: 10px 8px; text-align: center; }
-  .cpill-label { font-size: 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 3px; }
-  .cpill-value { font-size: 15px; font-weight: 700; }
+  .cpill-label { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 3px; font-weight: 700; }
+  .cpill-value { font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 1px; }
 
   /* ── TICKER CARD — Boarding pass aesthetic ── */
   .ticker-card {
@@ -88,7 +88,7 @@
     line-height: 1;
   }
   .bp-badges { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
-  .badge { font-size: 9px; padding: 2px 8px; border-radius: 3px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; }
+  .badge { font-family: 'Bebas Neue', sans-serif; font-size: 13px; padding: 3px 10px; border-radius: 3px; font-weight: 400; letter-spacing: 1.5px; text-transform: uppercase; }
   .badge-green  { background: #00e676; color: #000; }
   .badge-yellow { background: #ffd740; color: #000; }
   .badge-red    { background: #ff3d3d; color: #fff; }
@@ -142,9 +142,10 @@
   }
   .bp-action-detail {
     text-align: right;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 11px;
-    line-height: 1.6;
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 18px;
+    letter-spacing: 1px;
+    line-height: 1.4;
   }
 
   /* Order setup — 3 column boarding info */
@@ -188,14 +189,15 @@
     gap: 6px;
   }
   .bp-best-hour-pill {
-    font-size: 13px;
-    font-weight: 700;
-    padding: 3px 10px;
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 16px;
+    font-weight: 400;
+    padding: 4px 12px;
     border-radius: 4px;
     background: #111;
     color: #4a6272;
     border: 1px solid #222;
-    letter-spacing: 1px;
+    letter-spacing: 1.5px;
   }
   .bp-best-hour-pill.active {
     background: rgba(0,230,118,0.15);
@@ -212,7 +214,7 @@
   .log-table tr:hover td { background: rgba(255,255,255,0.025); }
   .bp-order-value {
     font-family: 'Bebas Neue', sans-serif;
-    font-size: 22px;
+    font-size: 28px;
     letter-spacing: 1px;
     line-height: 1;
   }
@@ -220,9 +222,9 @@
   /* Proj/meta strip */
   .bp-meta {
     padding: 8px 14px;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 10px;
-    font-weight: 700;
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 15px;
+    letter-spacing: 1px;
     color: #ddeeff;
     border-bottom: 1px dashed #222;
     display: flex;
@@ -319,8 +321,8 @@
   #detailView { display: none; padding: 10px; }
 
   /* ── DIAG PILL STRIP ── */
-  .bp-diag-strip { display:flex; justify-content:space-between; align-items:center; padding:8px 14px; border-top:1px dashed #222; gap:8px; }
-  .diag-pill { flex:1; padding:6px 0; border-radius:4px; font-family:'JetBrains Mono',monospace; font-size:9px; font-weight:700; letter-spacing:0.5px; cursor:pointer; text-align:center; text-transform:uppercase; border:1px solid; background:none; }
+  .bp-diag-strip { display:flex; justify-content:space-between; align-items:center; padding:10px 14px; border-top:1px dashed #222; gap:8px; }
+  .diag-pill { flex:1; padding:8px 0; border-radius:4px; font-family:'Bebas Neue',sans-serif; font-size:20px; font-weight:400; letter-spacing:2px; cursor:pointer; text-align:center; text-transform:uppercase; border:1px solid; background:none; }
   .diag-pill-clear { border-color:rgba(255,61,61,0.25); color:var(--red); }
   .diag-pill-start { border-color:rgba(74,98,114,0.3); color:var(--muted); }
   .diag-pill-start.active { border-color:rgba(0,230,118,0.4); color:var(--green); animation:pulse 1.8s ease-in-out infinite; }
