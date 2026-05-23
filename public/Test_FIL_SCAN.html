@@ -55,7 +55,7 @@
   /* ── COMBINED BAR ── */
   .combined { display: grid; grid-template-columns: repeat(5,1fr); gap: 6px; margin-bottom: 12px; }
   .cpill { background: var(--card); border: 1px solid var(--border); border-radius: 5px; padding: 10px 8px; text-align: center; }
-  .cpill-label { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 3px; font-weight: 700; }
+  .cpill-label { font-size: 9px; color: #fff; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 3px; font-weight: 700; }
   .cpill-value { font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 1px; }
 
   /* ── TICKER CARD ── */
@@ -87,7 +87,7 @@
   .bp-grid { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px dashed #222; }
   .bp-cell { padding: 10px 14px; border-right: 1px dashed #222; }
   .bp-cell:nth-child(even) { border-right: none; }
-  .bp-cell-label { font-size: 14px; font-weight: 700; color: #fff; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 3px; font-family: 'JetBrains Mono', monospace; }
+  .bp-cell-label { font-size: 14px; font-weight: 700; color: #fff !important; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 3px; font-family: 'JetBrains Mono', monospace; }
   .bp-cell-value { font-family: 'Bebas Neue', sans-serif; font-size: 28px; letter-spacing: 1px; line-height: 1; color: #fff; }
   .bp-cell-value.green  { color: #00e676; }
   .bp-cell-value.yellow { color: #ffd740; }
@@ -107,13 +107,13 @@
   .bp-order { display: grid; grid-template-columns: 1fr 1fr 1fr; border-bottom: 1px dashed #222; }
   .bp-order-cell { padding: 10px 14px; border-right: 1px dashed #222; }
   .bp-order-cell:last-child { border-right: none; }
-  .bp-order-label { font-size: 14px; font-weight: 700; color: #fff; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; font-family: 'JetBrains Mono', monospace; }
+  .bp-order-label { font-size: 14px; font-weight: 700; color: #fff !important; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; font-family: 'JetBrains Mono', monospace; }
   .bp-order-value { font-family: 'Bebas Neue', sans-serif; font-size: 28px; letter-spacing: 1px; line-height: 1; }
 
   .bp-meta { padding: 8px 14px; font-family: 'Bebas Neue', sans-serif; font-size: 15px; letter-spacing: 1px; color: #ddeeff; border-bottom: 1px dashed #222; display: flex; justify-content: space-between; }
 
   .bp-best-hours { padding: 10px 14px; border-top: 1px dashed #222; font-family: 'JetBrains Mono', monospace; }
-  .bp-best-hours-label { font-size: 14px; font-weight: 700; color: #fff; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+  .bp-best-hours-label { font-size: 14px; font-weight: 700; color: #fff !important; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
   .bp-best-hours-list { display: flex; flex-wrap: wrap; gap: 6px; }
   .bp-best-hour-pill { font-family: 'Bebas Neue', sans-serif; font-size: 16px; padding: 4px 12px; border-radius: 4px; background: #111; color: #4a6272; border: 1px solid #222; letter-spacing: 1.5px; }
   .bp-best-hour-pill.active { background: rgba(0,230,118,0.15); color: #00e676; border-color: #00e676; }
@@ -123,7 +123,7 @@
   .tick-dot { width: 18px; height: 18px; border-radius: 50%; border: 2px solid #333; background: #111; transition: all 0.3s; }
   .tick-dot.filled { background: #ffd740; border-color: #ffd740; box-shadow: 0 0 6px #ffd740; }
   .tick-dot.confirmed { background: #00e676; border-color: #00e676; box-shadow: 0 0 8px #00e676; }
-  .tick-count-label { font-family: 'Bebas Neue', sans-serif; font-size: 14px; letter-spacing: 1px; color: var(--muted); margin-left: 6px; }
+  .tick-count-label { font-family: 'Bebas Neue', sans-serif; font-size: 14px; letter-spacing: 1px; color: #fff; font-weight: 700; margin-left: 6px; }
 
   /* ── TRADE LOG TABLE ── */
   .log-table { width: 100%; border-collapse: collapse; font-family: 'JetBrains Mono', monospace; font-size: 11px; }
@@ -202,7 +202,7 @@
   .dline { display:flex; gap:8px; align-items:baseline; padding:1px 0; border-bottom:1px solid rgba(26,42,26,0.4); }
   .dline:last-child { border-bottom:none; }
   .dstep { min-width:22px; text-align:right; color:#1a4a1a; font-size:9px; font-weight:700; }
-  .dlabel { min-width:180px; color:#4a6272; font-size:9px; text-transform:uppercase; letter-spacing:0.5px; }
+  .dlabel { min-width:180px; color:#fff; font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; }
   .dval { flex:1; font-size:10px; font-weight:700; }
   .dval.ok    { color:#00e676; }
   .dval.warn  { color:#ffd740; }
@@ -584,6 +584,9 @@ function resetBand(sym, reason) {
   st.tpPrice2        = null;
   st.tpBuffer        = [];
   st.tpCount         = 0;
+  // Fix A: clear lastCandleTs so the spike/SL candle is never seeded into
+  // the new buffer — detection always starts from the NEXT candle after reset.
+  st.tpLastCandleTs  = null;
   st.cycleTradeCount = 0;
   st.activeDir       = 'LONG';
   st.action          = 'WAIT';
@@ -718,26 +721,6 @@ async function processSym(sym) {
   // ── SECTION B: BAND ACTIVE — manage LONG then SHORT ──────────────────────────
   if (st.inOsc) {
 
-    // Check for band break on new candles (price closed outside band on either side)
-    if (isNewCandle) {
-      const cp = roundTick(last.close, st.tick);
-      if (cp !== st.oscLower && cp !== st.oscUpper) {
-        // Price closed at a DIFFERENT tick level than the established band
-        // Only reset if neither open trade is filled (if filled, we see it through to TP/SL)
-        const hasFilledTrade = (st.openLong && st.openLong.fillConfirmed) ||
-                               (st.openShort && st.openShort.fillConfirmed);
-        if (!hasFilledTrade) {
-          resetBand(sym, 'price closed at '+fmtPrice(last.close,st.tick)+' outside band '+fmtPrice(st.oscLower,st.tick)+'-'+fmtPrice(st.oscUpper,st.tick));
-          // Restart tick-pair detection with this candle as seed
-          updateTickPair(sym, last);
-          dp(p+'.9B', 'BAND BROKEN', 'restarting tick-pair detection', 'bad');
-          return;
-        } else {
-          dp(p+'.9B', 'BAND DRIFT', 'close outside band but trade filled — monitoring', 'warn');
-        }
-      }
-    }
-
     // ── LONG LEG ──────────────────────────────────────────────────────────────
     if (st.activeDir === 'LONG') {
       dp(p+'.10', 'ACTIVE DIR', 'LONG', 'ok');
@@ -763,7 +746,6 @@ async function processSym(sym) {
           dp(p+'.12', 'LONG SPIKE SWEEP', 'low hit SL before entry confirmed — reset', 'bad');
           st.openLong = null;
           resetBand(sym, 'spike swept through long SL without clean fill');
-          updateTickPair(sym, last);
           return;
         }
 
@@ -807,12 +789,10 @@ async function processSym(sym) {
         dp(p+'.15', 'LONG SL HIT', fmtPrice(pfLow,st.tick)+' <= '+fmtPrice(lng.sl,st.tick)+' → LOSS · RESET', 'bad');
         closeTrade(sym, lng, lng.sl, 'SL');
         resetBand(sym, 'long SL hit — band broken');
-        updateTickPair(sym, last);
       } else if (pfC.length >= MAX_HOLD_CANDLES) {
         dp(p+'.15', 'LONG TIMEOUT', pfC.length+'c max hold — exit @ '+fmtPrice(last.close,st.tick), 'bad');
         closeTrade(sym, lng, last.close, 'TIMEOUT');
         resetBand(sym, 'long timeout — band abandoned');
-        updateTickPair(sym, last);
       } else {
         dp(p+'.15', 'LONG HOLDING', pfC.length+'/'+MAX_HOLD_CANDLES+'c · hi='+fmtPrice(pfHigh,st.tick)+' lo='+fmtPrice(pfLow,st.tick), 'warn');
         st.action = 'SAME_TRADE';
@@ -843,7 +823,6 @@ async function processSym(sym) {
           dp(p+'.12', 'SHORT SPIKE SWEEP', 'high hit SL before short confirmed — reset', 'bad');
           st.openShort = null;
           resetBand(sym, 'spike swept through short SL without clean fill');
-          updateTickPair(sym, last);
           return;
         }
 
@@ -887,12 +866,10 @@ async function processSym(sym) {
         dp(p+'.15', 'SHORT SL HIT', fmtPrice(pfHigh,st.tick)+' >= '+fmtPrice(sht.sl,st.tick)+' → LOSS · RESET', 'bad');
         closeTrade(sym, sht, sht.sl, 'SL');
         resetBand(sym, 'short SL hit — band broken');
-        updateTickPair(sym, last);
       } else if (pfC.length >= MAX_HOLD_CANDLES) {
         dp(p+'.15', 'SHORT TIMEOUT', pfC.length+'c max hold — exit @ '+fmtPrice(last.close,st.tick), 'bad');
         closeTrade(sym, sht, last.close, 'TIMEOUT');
         resetBand(sym, 'short timeout — band abandoned');
-        updateTickPair(sym, last);
       } else {
         dp(p+'.15', 'SHORT HOLDING', pfC.length+'/'+MAX_HOLD_CANDLES+'c · hi='+fmtPrice(pfHigh,st.tick)+' lo='+fmtPrice(pfLow,st.tick), 'warn');
         st.action = 'SHORT_FILLED';
@@ -982,15 +959,17 @@ function renderTicker(sym) {
   }
 
   // Tick-pair progress dots
+  // Fix C: always use live tpCount for dots — reflects 0→3 on every cycle restart
+  const liveTpCount = st.tpCount;
   const dots = Array.from({length: CONFIRM_COUNT}, (_,i) => {
-    const cls = i < st.tpCount ? (st.tpCount >= CONFIRM_COUNT ? 'confirmed' : 'filled') : '';
+    const cls = i < liveTpCount ? (liveTpCount >= CONFIRM_COUNT ? 'confirmed' : 'filled') : '';
     return '<div class="tick-dot '+cls+'"></div>';
   }).join('');
   const tickStripHtml = '<div class="bp-tick-strip">' + dots +
     '<span class="tick-count-label">' +
     (st.inOsc
       ? 'BAND CONFIRMED ' + fmtPrice(st.oscLower,st.tick) + ' – ' + fmtPrice(st.oscUpper,st.tick)
-      : 'TICK-PAIR: ' + st.tpCount + ' / ' + CONFIRM_COUNT + ' SAME CLOSES') +
+      : 'TICK-PAIR: ' + liveTpCount + ' / ' + CONFIRM_COUNT + ' SAME CLOSES') +
     '</span></div>';
 
   // Price grid
