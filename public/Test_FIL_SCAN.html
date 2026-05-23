@@ -53,7 +53,7 @@
   .blackout { background: rgba(255,61,61,0.08); border: 1px solid rgba(255,61,61,0.25); border-radius: 5px; padding: 7px 12px; margin-bottom: 10px; color: var(--red); font-size: 11px; font-weight: 700; text-align: center; display: none; }
 
   /* ── COMBINED BAR ── */
-  .combined { display: grid; grid-template-columns: repeat(4,1fr); gap: 6px; margin-bottom: 12px; }
+  .combined { display: grid; grid-template-columns: repeat(5,1fr); gap: 6px; margin-bottom: 12px; }
   .cpill { background: var(--card); border: 1px solid var(--border); border-radius: 5px; padding: 10px 8px; text-align: center; }
   .cpill-label { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 3px; font-weight: 700; }
   .cpill-value { font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 1px; }
@@ -256,6 +256,7 @@
     <div class="cpill"><div class="cpill-label">Win Rate</div><div class="cpill-value" id="totalWr">--</div></div>
     <div class="cpill"><div class="cpill-label">Trades</div><div class="cpill-value" id="totalTrades">0</div></div>
     <div class="cpill"><div class="cpill-label">Bands</div><div class="cpill-value" id="totalOsc">0</div></div>
+    <div class="cpill" style="border-color:rgba(0,230,118,0.3)"><div class="cpill-label" style="color:var(--green)">#Trades in Cycle</div><div class="cpill-value green" id="cycleCount">0</div></div>
   </div>
 
   <div id="tickerCards"></div>
@@ -402,6 +403,7 @@ SYMBOLS.forEach(s => {
     oscLower: 0,
     oscUpper: 0,
     bandConfirmCount: 0,   // total bands found this session
+    cycleTradeCount: 0,    // TPs achieved in the current band cycle (resets on SL/reset)
     // trades
     openLong:  null,       // current LONG limit order / position
     openShort: null,       // current SHORT limit order / position (arms after long TP)
@@ -575,14 +577,15 @@ function resetBand(sym, reason) {
   if (st.openLong  && !st.openLong.fillConfirmed)  st.openLong  = null;
   if (st.openShort && !st.openShort.fillConfirmed) st.openShort = null;
   // reset oscillator so tick-pair restarts
-  st.inOsc     = false;
-  st.oscLower  = 0;
-  st.oscUpper  = 0;
-  st.tpPrice1  = null;
-  st.tpPrice2  = null;
-  st.tpCount   = 0;
-  st.activeDir = 'LONG';
-  st.action    = 'WAIT';
+  st.inOsc           = false;
+  st.oscLower        = 0;
+  st.oscUpper        = 0;
+  st.tpPrice1        = null;
+  st.tpPrice2        = null;
+  st.tpCount         = 0;
+  st.cycleTradeCount = 0;
+  st.activeDir       = 'LONG';
+  st.action          = 'WAIT';
 }
 
 // ── TICK-PAIR OSCILLATOR ───────────────────────────────────────────────────────
@@ -790,6 +793,8 @@ async function processSym(sym) {
       if (pfHigh >= lng.target) {
         dp(p+'.15', 'LONG TP HIT', fmtPrice(pfHigh,st.tick)+' >= '+fmtPrice(lng.target,st.tick)+' → WIN', 'ok');
         closeTrade(sym, lng, lng.target, 'TP');
+        st.cycleTradeCount++;
+        dp(p+'.15b', 'CYCLE TP COUNT', st.cycleTradeCount, 'ok');
         // Band intact — flip to SHORT
         st.activeDir = 'SHORT';
         st.action    = 'SHORT_ARMED';
@@ -868,6 +873,8 @@ async function processSym(sym) {
       if (pfLow <= sht.target) {
         dp(p+'.15', 'SHORT TP HIT', fmtPrice(pfLow,st.tick)+' <= '+fmtPrice(sht.target,st.tick)+' → WIN', 'ok');
         closeTrade(sym, sht, sht.target, 'TP');
+        st.cycleTradeCount++;
+        dp(p+'.15b', 'CYCLE TP COUNT', st.cycleTradeCount, 'ok');
         // Cycle back to LONG
         st.activeDir = 'LONG';
         st.action    = 'ARMED';
@@ -915,13 +922,14 @@ function renderSession() {
 }
 
 function renderCombined() {
-  let net=0, wins=0, count=0, bands=0;
+  let net=0, wins=0, count=0, bands=0, cycleTotal=0;
   SYMBOLS.forEach(sym => {
     const today = state[sym].trades.filter(t => t.ts >= state[sym].sessionStart);
-    net   += today.reduce((s,t) => s+(t.net||0), 0);
-    wins  += today.filter(t => t.outcome==='WIN').length;
-    count += today.length;
-    bands += state[sym].bandConfirmCount;
+    net        += today.reduce((s,t) => s+(t.net||0), 0);
+    wins       += today.filter(t => t.outcome==='WIN').length;
+    count      += today.length;
+    bands      += state[sym].bandConfirmCount;
+    cycleTotal += state[sym].cycleTradeCount;
   });
   const el = document.getElementById('totalPnl');
   el.textContent  = fmtPnl(net);
@@ -929,6 +937,9 @@ function renderCombined() {
   document.getElementById('totalWr').textContent     = count ? Math.round(wins/count*100)+'%' : '--';
   document.getElementById('totalTrades').textContent = count;
   document.getElementById('totalOsc').textContent    = bands;
+  const cc = document.getElementById('cycleCount');
+  cc.textContent = cycleTotal;
+  cc.style.color = cycleTotal > 0 ? 'var(--green)' : 'var(--muted)';
 }
 
 // ── RENDER TICKER ─────────────────────────────────────────────────────────────
@@ -1268,8 +1279,9 @@ function clearAll() {
     st.oscLower        = 0;
     st.oscUpper        = 0;
     st.bandConfirmCount = 0;
-    st.action          = 'WAIT';
-    st.activeDir       = 'LONG';
+    st.cycleTradeCount  = 0;
+    st.action           = 'WAIT';
+    st.activeDir        = 'LONG';
     localStorage.removeItem('test_fil_v2_'+s);
   });
   allTrades = [];
