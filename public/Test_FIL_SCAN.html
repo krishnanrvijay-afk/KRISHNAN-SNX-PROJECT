@@ -896,11 +896,10 @@ async function processSym(sym) {
               if (!inBlackout()) openLong(sym, last);
             }
           } else if (st.inDrift && cp >= st.oscLower) {
-            // Price recovered back into original band — cancel drift
-            st.inDrift      = false;
-            st.shadowBuffer = [];
-            st.shadowCount  = 0;
-            dp(p+'.DR1', 'DRIFT CLEARED', 'price recovered to '+fmtPrice(cp,st.tick), 'ok');
+            // Price recovered to break-even — scratch the trade at 0.00 PNL and reset
+            dp(p+'.DR1', 'DRIFT SCRATCH', 'price back to '+fmtPrice(cp,st.tick)+' → scratch @ 0.00 · reset band', 'ok');
+            closeTrade(sym, lng, cp, 'SCRATCH');
+            resetBand(sym, 'drift scratch — break-even exit · fresh band search');
           }
         }
       }
@@ -1012,11 +1011,10 @@ async function processSym(sym) {
               if (!inBlackout()) openShort(sym, last);
             }
           } else if (st.inDrift && cp <= st.oscUpper) {
-            // Price recovered back into original band — cancel drift
-            st.inDrift      = false;
-            st.shadowBuffer = [];
-            st.shadowCount  = 0;
-            dp(p+'.DR1', 'DRIFT CLEARED', 'price recovered to '+fmtPrice(cp,st.tick), 'ok');
+            // Price recovered to break-even — scratch the trade at 0.00 PNL and reset
+            dp(p+'.DR1', 'DRIFT SCRATCH', 'price back to '+fmtPrice(cp,st.tick)+' → scratch @ 0.00 · reset band', 'ok');
+            closeTrade(sym, sht, cp, 'SCRATCH');
+            resetBand(sym, 'drift scratch — break-even exit · fresh band search');
           }
         }
       }
