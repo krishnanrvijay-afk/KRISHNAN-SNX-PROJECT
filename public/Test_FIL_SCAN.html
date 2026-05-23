@@ -842,13 +842,20 @@ async function processSym(sym) {
         // Intra-fill-candle TP check: if current candle high already hit target, take profit now
         if (last.close > lng.target) {
           st.inDrift = false; st.shadowBuffer = []; st.shadowCount = 0; st.unrPnl = 0;
-          dp(p+'.14', 'LONG TP IMMEDIATE', fmtPrice(last.close,st.tick)+' >= '+fmtPrice(lng.target,st.tick)+' → WIN (fill candle)', 'ok');
+          dp(p+'.14', 'LONG TP IMMEDIATE', fmtPrice(last.close,st.tick)+' > '+fmtPrice(lng.target,st.tick)+' → WIN (fill candle)', 'ok');
           closeTrade(sym, lng, lng.target, 'TP');
           st.cycleTradeCount++;
           dp(p+'.14b', 'CYCLE TP COUNT', st.cycleTradeCount, 'ok');
           st.activeDir = 'SHORT';
           st.action    = 'SHORT_ARMED';
           if (!inBlackout()) openShort(sym, last);
+          return;
+        }
+        if (last.close < lng.sl) {
+          st.inDrift = false; st.shadowBuffer = []; st.shadowCount = 0; st.unrPnl = 0;
+          dp(p+'.14', 'LONG SL IMMEDIATE', fmtPrice(last.close,st.tick)+' < '+fmtPrice(lng.sl,st.tick)+' → LOSS (fill candle)', 'bad');
+          closeTrade(sym, lng, lng.sl, 'SL');
+          resetBand(sym, 'long SL immediate — band broken');
           return;
         }
         dp(p+'.14', 'LONG WAITING', 'filled · next candle checks TP/SL', 'info');
@@ -899,9 +906,9 @@ async function processSym(sym) {
             dp(p+'.DR2', 'DRIFT STATUS', 'unr '+fmtPnl(st.unrPnl)+' · shadow '+st.shadowCount+'/'+CONFIRM_COUNT, 'warn');
             const shadowResult = updateShadowBuffer(sym, cp);
             if (shadowResult) {
-              // Shadow band confirmed — scratch current LONG and migrate band down
-              dp(p+'.DR4', 'BAND MIGRATE', 'scratch @ '+fmtPrice(cp,st.tick)+' → new band '+fmtPrice(shadowResult.lower,st.tick)+' – '+fmtPrice(shadowResult.upper,st.tick), 'ok');
-              closeTrade(sym, lng, cp, 'MIGRATE');
+              // Shadow band confirmed — scratch at entry ($0.00) and migrate band down
+              dp(p+'.DR4', 'PATTERN SHIFT', 'scratch @ entry '+fmtPrice(lng.entry,st.tick)+' ($0.00) → new band '+fmtPrice(shadowResult.lower,st.tick)+' – '+fmtPrice(shadowResult.upper,st.tick), 'ok');
+              closeTrade(sym, lng, lng.entry, 'SCRATCH');
               st.oscLower     = shadowResult.lower;
               st.oscUpper     = shadowResult.upper;
               st.inDrift      = false;
@@ -972,13 +979,20 @@ async function processSym(sym) {
         // Intra-fill-candle TP check: if current candle low already hit target, take profit now
         if (last.close < sht.target) {
           st.inDrift = false; st.shadowBuffer = []; st.shadowCount = 0; st.unrPnl = 0;
-          dp(p+'.14', 'SHORT TP IMMEDIATE', fmtPrice(last.close,st.tick)+' <= '+fmtPrice(sht.target,st.tick)+' → WIN (fill candle)', 'ok');
+          dp(p+'.14', 'SHORT TP IMMEDIATE', fmtPrice(last.close,st.tick)+' < '+fmtPrice(sht.target,st.tick)+' → WIN (fill candle)', 'ok');
           closeTrade(sym, sht, sht.target, 'TP');
           st.cycleTradeCount++;
           dp(p+'.14b', 'CYCLE TP COUNT', st.cycleTradeCount, 'ok');
           st.activeDir = 'LONG';
           st.action    = 'ARMED';
           if (!inBlackout()) openLong(sym, last);
+          return;
+        }
+        if (last.close > sht.sl) {
+          st.inDrift = false; st.shadowBuffer = []; st.shadowCount = 0; st.unrPnl = 0;
+          dp(p+'.14', 'SHORT SL IMMEDIATE', fmtPrice(last.close,st.tick)+' > '+fmtPrice(sht.sl,st.tick)+' → LOSS (fill candle)', 'bad');
+          closeTrade(sym, sht, sht.sl, 'SL');
+          resetBand(sym, 'short SL immediate — band broken');
           return;
         }
         dp(p+'.14', 'SHORT WAITING', 'filled · next candle checks TP/SL', 'info');
@@ -1029,9 +1043,9 @@ async function processSym(sym) {
             dp(p+'.DR2', 'DRIFT STATUS', 'unr '+fmtPnl(st.unrPnl)+' · shadow '+st.shadowCount+'/'+CONFIRM_COUNT, 'warn');
             const shadowResult = updateShadowBuffer(sym, cp);
             if (shadowResult) {
-              // Shadow band confirmed — scratch current SHORT and migrate band up
-              dp(p+'.DR4', 'BAND MIGRATE', 'scratch @ '+fmtPrice(cp,st.tick)+' → new band '+fmtPrice(shadowResult.lower,st.tick)+' – '+fmtPrice(shadowResult.upper,st.tick), 'ok');
-              closeTrade(sym, sht, cp, 'MIGRATE');
+              // Shadow band confirmed — scratch at entry ($0.00) and migrate band up
+              dp(p+'.DR4', 'PATTERN SHIFT', 'scratch @ entry '+fmtPrice(sht.entry,st.tick)+' ($0.00) → new band '+fmtPrice(shadowResult.lower,st.tick)+' – '+fmtPrice(shadowResult.upper,st.tick), 'ok');
+              closeTrade(sym, sht, sht.entry, 'SCRATCH');
               st.oscLower     = shadowResult.lower;
               st.oscUpper     = shadowResult.upper;
               st.inDrift      = false;
@@ -1188,7 +1202,7 @@ function renderTicker(sym) {
   const priceGrid = '<div class="bp-grid">' +
     '<div class="bp-cell"><div class="bp-cell-label">Candle Close</div>' +
       '<div class="bp-cell-value yellow">'+fmtPrice(st.displayPrice || st.lastPrice,st.tick)+'</div>' +
-      '<div id="candle-cd" style="font-size:9px;color:var(--muted);margin-top:2px;font-family:JetBrains Mono,monospace">--s</div></div>' +
+      '<div id="candle-cd" style="font-size:13px;color:#00e5ff;font-weight:700;margin-top:3px;font-family:JetBrains Mono,monospace">--s</div></div>' +
     '<div class="bp-cell"><div class="bp-cell-label">Session P&L</div>' +
       '<div class="bp-cell-value '+pnlCls+'">'+fmtPnl(net)+'</div></div>' +
     '<div class="bp-cell"><div class="bp-cell-label">Win Rate</div>' +
