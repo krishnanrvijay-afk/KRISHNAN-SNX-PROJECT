@@ -343,10 +343,9 @@ const DIAG_KEY = 'test_fil_diag_v2';
 let diagLog = [];
 let diagEnabled = true;
 
-try {
-  const s = localStorage.getItem(DIAG_KEY);
-  if (s) diagLog = JSON.parse(s);
-} catch(e) { diagLog = []; }
+// Clear all stored state on every startup — fresh session each time
+localStorage.removeItem(DIAG_KEY);
+SYMBOLS.forEach(sym => localStorage.removeItem('test_fil_v2_' + sym));
 
 function dp(step, label, val, cls) {
   if (!diagEnabled) return;
@@ -417,7 +416,7 @@ SYMBOLS.forEach(s => {
     openLong:  null,       // current LONG limit order / position
     openShort: null,       // current SHORT limit order / position (arms after long TP)
     activeDir: 'LONG',     // which direction is currently active: LONG or SHORT
-    trades: JSON.parse(localStorage.getItem('test_fil_v2_'+s) || '[]'),
+    trades: [],
     sessionStart: todayStartEDT(),
     lastPrice: 0, displayPrice: 0, lastCandleTs: null, dayRange: 0,
     depth: null,
@@ -850,9 +849,9 @@ async function processSym(sym) {
       const pfC = raw.filter(c => c.ts > lng.filledAtCandleTs);
       if (!pfC.length) {
         // Intra-fill-candle TP check: if current candle high already hit target, take profit now
-        if (last.close > lng.target) {
+        if (last.close >= lng.target) {
           st.inDrift = false; st.shadowBuffer = []; st.shadowCount = 0; st.unrPnl = 0;
-          dp(p+'.14', 'LONG TP IMMEDIATE', fmtPrice(last.close,st.tick)+' > '+fmtPrice(lng.target,st.tick)+' → WIN (fill candle)', 'ok');
+          dp(p+'.14', 'LONG TP IMMEDIATE', fmtPrice(last.close,st.tick)+' >= '+fmtPrice(lng.target,st.tick)+' → WIN (fill candle)', 'ok');
           closeTrade(sym, lng, lng.target, 'TP');
           st.cycleTradeCount++;
           dp(p+'.14b', 'CYCLE TP COUNT', st.cycleTradeCount, 'ok');
@@ -988,9 +987,9 @@ async function processSym(sym) {
       const pfC = raw.filter(c => c.ts > sht.filledAtCandleTs);
       if (!pfC.length) {
         // Intra-fill-candle TP check: if current candle low already hit target, take profit now
-        if (last.close < sht.target) {
+        if (last.close <= sht.target) {
           st.inDrift = false; st.shadowBuffer = []; st.shadowCount = 0; st.unrPnl = 0;
-          dp(p+'.14', 'SHORT TP IMMEDIATE', fmtPrice(last.close,st.tick)+' < '+fmtPrice(sht.target,st.tick)+' → WIN (fill candle)', 'ok');
+          dp(p+'.14', 'SHORT TP IMMEDIATE', fmtPrice(last.close,st.tick)+' <= '+fmtPrice(sht.target,st.tick)+' → WIN (fill candle)', 'ok');
           closeTrade(sym, sht, sht.target, 'TP');
           st.cycleTradeCount++;
           dp(p+'.14b', 'CYCLE TP COUNT', st.cycleTradeCount, 'ok');
