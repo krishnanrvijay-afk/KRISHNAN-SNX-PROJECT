@@ -840,7 +840,7 @@ async function processSym(sym) {
       const pfC = raw.filter(c => c.ts > lng.filledAtCandleTs);
       if (!pfC.length) {
         // Intra-fill-candle TP check: if current candle high already hit target, take profit now
-        if (last.close >= lng.target) {
+        if (last.close > lng.target) {
           st.inDrift = false; st.shadowBuffer = []; st.shadowCount = 0; st.unrPnl = 0;
           dp(p+'.14', 'LONG TP IMMEDIATE', fmtPrice(last.close,st.tick)+' >= '+fmtPrice(lng.target,st.tick)+' → WIN (fill candle)', 'ok');
           closeTrade(sym, lng, lng.target, 'TP');
@@ -967,7 +967,7 @@ async function processSym(sym) {
       const pfC = raw.filter(c => c.ts > sht.filledAtCandleTs);
       if (!pfC.length) {
         // Intra-fill-candle TP check: if current candle low already hit target, take profit now
-        if (last.close <= sht.target) {
+        if (last.close < sht.target) {
           st.inDrift = false; st.shadowBuffer = []; st.shadowCount = 0; st.unrPnl = 0;
           dp(p+'.14', 'SHORT TP IMMEDIATE', fmtPrice(last.close,st.tick)+' <= '+fmtPrice(sht.target,st.tick)+' → WIN (fill candle)', 'ok');
           closeTrade(sym, sht, sht.target, 'TP');
