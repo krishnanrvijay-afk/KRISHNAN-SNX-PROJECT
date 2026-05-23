@@ -419,7 +419,7 @@ SYMBOLS.forEach(s => {
     activeDir: 'LONG',     // which direction is currently active: LONG or SHORT
     trades: JSON.parse(localStorage.getItem('test_fil_v2_'+s) || '[]'),
     sessionStart: todayStartEDT(),
-    lastPrice: 0, lastCandleTs: null, dayRange: 0,
+    lastPrice: 0, displayPrice: 0, lastCandleTs: null, dayRange: 0,
     depth: null,
     action: 'WAIT',
     // drift / band-migration state
@@ -757,7 +757,7 @@ async function processSym(sym) {
   dp(p+'.7', 'OPEN SHORT', st.openShort ? (st.openShort.fillConfirmed ? 'FILLED @ '+fmtPrice(st.openShort.fillPrice,st.tick) : 'PENDING E:'+fmtPrice(st.openShort.entry,st.tick)) : 'none', st.openShort ? (st.openShort.fillConfirmed?'purple':'warn') : 'muted');
 
   const isNewCandle = last.ts !== st.lastCandleTs;
-  if (isNewCandle) st.lastCandleTs = last.ts;
+  if (isNewCandle) { st.lastCandleTs = last.ts; st.displayPrice = last.close; }
   dp(p+'.8', 'CANDLE', isNewCandle ? 'NEW — processing tick-pair' : 'LIVE — intra-poll checks only', isNewCandle ? 'ok' : 'muted');
 
   // ── SECTION A: TICK-PAIR DETECTION (only on new candles, band not yet confirmed) ──
@@ -883,15 +883,18 @@ async function processSym(sym) {
         st.action = 'SAME_TRADE';
 
         // ── DRIFT DETECTION (new candles only) ──────────────────────────────
-        // Drift zone: close is below oscLower (band broken) but above hard SL
+        // Drift zone: close OR candle low is below oscLower but above hard SL
         if (isNewCandle) {
           const cp = roundTick(last.close, st.tick);
-          if (cp < st.oscLower && cp > lng.sl) {
+          const lastPfCandle = pfC.length > 0 ? pfC[pfC.length - 1] : null;
+          const pfLastLow = lastPfCandle ? roundTick(lastPfCandle.low, st.tick) : cp;
+          if ((cp < st.oscLower || pfLastLow < st.oscLower) && cp > lng.sl) {
             if (!st.inDrift) {
               st.inDrift      = true;
               st.shadowBuffer = [];
               st.shadowCount  = 0;
-              dp(p+'.DR1', 'DRIFT START', 'price '+fmtPrice(cp,st.tick)+' below band '+fmtPrice(st.oscLower,st.tick)+' — shadow counting', 'warn');
+              const trigger = cp < st.oscLower ? 'close '+fmtPrice(cp,st.tick) : 'candle low '+fmtPrice(pfLastLow,st.tick);
+              dp(p+'.DR1', 'DRIFT START', trigger+' below band '+fmtPrice(st.oscLower,st.tick)+' — shadow counting', 'warn');
             }
             dp(p+'.DR2', 'DRIFT STATUS', 'unr '+fmtPnl(st.unrPnl)+' · shadow '+st.shadowCount+'/'+CONFIRM_COUNT, 'warn');
             const shadowResult = updateShadowBuffer(sym, cp);
@@ -1010,15 +1013,18 @@ async function processSym(sym) {
         st.action = 'SHORT_FILLED';
 
         // ── DRIFT DETECTION (new candles only) ──────────────────────────────
-        // Drift zone: close is above oscUpper (band broken) but below hard SL
+        // Drift zone: close OR candle high is above oscUpper but below hard SL
         if (isNewCandle) {
           const cp = roundTick(last.close, st.tick);
-          if (cp > st.oscUpper && cp < sht.sl) {
+          const lastPfCandle = pfC.length > 0 ? pfC[pfC.length - 1] : null;
+          const pfLastHigh = lastPfCandle ? roundTick(lastPfCandle.high, st.tick) : cp;
+          if ((cp > st.oscUpper || pfLastHigh > st.oscUpper) && cp < sht.sl) {
             if (!st.inDrift) {
               st.inDrift      = true;
               st.shadowBuffer = [];
               st.shadowCount  = 0;
-              dp(p+'.DR1', 'DRIFT START', 'price '+fmtPrice(cp,st.tick)+' above band '+fmtPrice(st.oscUpper,st.tick)+' — shadow counting', 'warn');
+              const trigger = cp > st.oscUpper ? 'close '+fmtPrice(cp,st.tick) : 'candle high '+fmtPrice(pfLastHigh,st.tick);
+              dp(p+'.DR1', 'DRIFT START', trigger+' above band '+fmtPrice(st.oscUpper,st.tick)+' — shadow counting', 'warn');
             }
             dp(p+'.DR2', 'DRIFT STATUS', 'unr '+fmtPnl(st.unrPnl)+' · shadow '+st.shadowCount+'/'+CONFIRM_COUNT, 'warn');
             const shadowResult = updateShadowBuffer(sym, cp);
@@ -1178,8 +1184,8 @@ function renderTicker(sym) {
   const pnlCls = net >= 0 ? 'green' : 'red';
 
   const priceGrid = '<div class="bp-grid">' +
-    '<div class="bp-cell"><div class="bp-cell-label">Price</div>' +
-      '<div class="bp-cell-value yellow">'+fmtPrice(st.lastPrice,st.tick)+'</div></div>' +
+    '<div class="bp-cell"><div class="bp-cell-label">Candle Close</div>' +
+      '<div class="bp-cell-value yellow">'+fmtPrice(st.displayPrice || st.lastPrice,st.tick)+'</div></div>' +
     '<div class="bp-cell"><div class="bp-cell-label">Session P&L</div>' +
       '<div class="bp-cell-value '+pnlCls+'">'+fmtPnl(net)+'</div></div>' +
     '<div class="bp-cell"><div class="bp-cell-label">Win Rate</div>' +
@@ -1470,6 +1476,7 @@ function clearAll() {
     st.shadowCount      = 0;
     st.shadowPrice1     = null;
     st.shadowPrice2     = null;
+    st.displayPrice     = 0;
     st.unrPnl           = 0;
     localStorage.removeItem('test_fil_v2_'+s);
   });
