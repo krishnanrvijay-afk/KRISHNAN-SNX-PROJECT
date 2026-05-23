@@ -582,6 +582,7 @@ function resetBand(sym, reason) {
   st.oscUpper        = 0;
   st.tpPrice1        = null;
   st.tpPrice2        = null;
+  st.tpBuffer        = [];
   st.tpCount         = 0;
   st.cycleTradeCount = 0;
   st.activeDir       = 'LONG';
@@ -590,69 +591,70 @@ function resetBand(sym, reason) {
 
 // ── TICK-PAIR OSCILLATOR ───────────────────────────────────────────────────────
 // Returns { confirmed: bool, lower, upper } or null if still accumulating.
-// Uses close prices rounded to tick.
-// Logic:
-//   - Each NEW candle: compare tick-rounded close to tpPrice1/tpPrice2
-//   - If new close == previous close (same tick): increment tpCount
-//   - If different: reset pair, start fresh
-//   - When tpCount reaches CONFIRM_COUNT: band confirmed
+//
+// Detection rule: last CONFIRM_COUNT candle closes (tick-rounded) must ALL fall
+// within a 1-tick range of each other.  This catches both:
+//   • Three identical closes:          0.9670, 0.9670, 0.9670 → range = 0 ✓
+//   • Two-tick alternation (the bug):  0.9680, 0.9670, 0.9680 → range = 1 tick ✓
+//   • Any close 2+ ticks away resets the rolling buffer.
+//
+// Band = [min of buffer, min + 1 tick].
 function updateTickPair(sym, candle) {
-  const st    = state[sym];
-  const p     = pollCount;
+  const st = state[sym];
+  const p  = pollCount;
 
   // Skip if this candle was already processed
   if (candle.ts === st.tpLastCandleTs) return null;
   st.tpLastCandleTs = candle.ts;
 
   const price = roundTick(candle.close, st.tick);
-
   dp(p+'.TP1', 'TICK-PAIR CLOSE', fmtPrice(candle.close, st.tick) + ' → tick ' + fmtPrice(price, st.tick), 'info');
 
-  if (st.tpPrice1 === null) {
-    // First candle ever — store as price1
-    st.tpPrice1 = price;
-    st.tpPrice2 = null;
-    st.tpCount  = 1;
-    dp(p+'.TP2', 'TICK-PAIR', 'SEED P1='+fmtPrice(price,st.tick)+' count=1', 'muted');
-    return null;
-  }
+  // Initialise buffer if needed
+  if (!st.tpBuffer) st.tpBuffer = [];
 
-  if (st.tpPrice2 === null) {
-    // Second candle — store as price2
-    st.tpPrice2 = price;
-    if (price === st.tpPrice1) {
-      st.tpCount = 2;
-      dp(p+'.TP2', 'TICK-PAIR', 'P1==P2='+fmtPrice(price,st.tick)+' count=2', 'warn');
-    } else {
-      // Different — shift: p2 becomes new p1
+  // Check if the new price fits within the current buffer's 1-tick window
+  if (st.tpBuffer.length > 0) {
+    const bufMin = Math.min(...st.tpBuffer);
+    const bufMax = Math.max(...st.tpBuffer);
+    const newMin = Math.min(bufMin, price);
+    const newMax = Math.max(bufMax, price);
+    const rangeOk = Math.round((newMax - newMin) / st.tick) <= 1;
+
+    if (!rangeOk) {
+      // Price broke out of 1-tick window — reset buffer, start fresh with this candle
+      dp(p+'.TP2', 'TICK-PAIR RESET', 'price '+fmtPrice(price,st.tick)+' broke window '+fmtPrice(bufMin,st.tick)+'-'+fmtPrice(bufMax,st.tick)+' → restart', 'muted');
+      st.tpBuffer = [price];
+      st.tpCount  = 1;
+      // keep tpPrice1/tpPrice2 in sync for the display dots
       st.tpPrice1 = price;
       st.tpPrice2 = null;
-      st.tpCount  = 1;
-      dp(p+'.TP2', 'TICK-PAIR', 'MISMATCH reset P1='+fmtPrice(price,st.tick)+' count=1', 'muted');
+      return null;
     }
-    return null;
   }
 
-  // We have p1, p2, now comparing new close
-  if (price === st.tpPrice1) {
-    st.tpCount++;
-    dp(p+'.TP2', 'TICK-PAIR', 'MATCH count='+st.tpCount+'/'+CONFIRM_COUNT+' at '+fmtPrice(price,st.tick), st.tpCount >= CONFIRM_COUNT ? 'ok' : 'warn');
-    if (st.tpCount >= CONFIRM_COUNT) {
-      // CONFIRMED — band is exactly 1 tick wide around the consensus price
-      const lower = price;
-      const upper = +(price + st.tick).toFixed(7);
-      dp(p+'.TP3', 'BAND CONFIRMED', fmtPrice(lower,st.tick)+' – '+fmtPrice(upper,st.tick)+' ('+CONFIRM_COUNT+'x same tick)', 'ok');
-      return { confirmed: true, lower, upper };
-    }
-    return null;
-  } else {
-    // Different tick — full reset
-    st.tpPrice1 = price;
-    st.tpPrice2 = null;
-    st.tpCount  = 1;
-    dp(p+'.TP2', 'TICK-PAIR', 'MISMATCH reset P1='+fmtPrice(price,st.tick)+' count=1', 'muted');
-    return null;
+  // Price fits — push into rolling buffer (keep only last CONFIRM_COUNT)
+  st.tpBuffer.push(price);
+  if (st.tpBuffer.length > CONFIRM_COUNT) st.tpBuffer.shift();
+  st.tpCount = st.tpBuffer.length;
+
+  // Update display fields
+  st.tpPrice1 = st.tpBuffer[0] || null;
+  st.tpPrice2 = st.tpBuffer[1] || null;
+
+  dp(p+'.TP2', 'TICK-PAIR BUFFER',
+    st.tpBuffer.map(v => fmtPrice(v, st.tick)).join(', ') + '  count='+st.tpCount+'/'+CONFIRM_COUNT,
+    st.tpCount >= CONFIRM_COUNT ? 'ok' : 'warn');
+
+  if (st.tpCount >= CONFIRM_COUNT) {
+    const lower = +(Math.min(...st.tpBuffer)).toFixed(7);
+    const upper = +(lower + st.tick).toFixed(7);
+    dp(p+'.TP3', 'BAND CONFIRMED',
+      fmtPrice(lower,st.tick)+' – '+fmtPrice(upper,st.tick)+' ('+CONFIRM_COUNT+'c within 1 tick)', 'ok');
+    return { confirmed: true, lower, upper };
   }
+
+  return null;
 }
 
 // ── CORE PROCESS ──────────────────────────────────────────────────────────────
@@ -1275,6 +1277,7 @@ function clearAll() {
     st.tpPrice1        = null;
     st.tpPrice2        = null;
     st.tpCount         = 0;
+    st.tpBuffer        = [];
     st.tpLastCandleTs  = null;
     st.oscLower        = 0;
     st.oscUpper        = 0;
