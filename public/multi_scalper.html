@@ -767,11 +767,14 @@ async function processSym(sym) {
   dp(p+'.14', 'STATE oscBreakCount', String(st.oscBreakCount), st.oscBreakCount > 0 ? 'warn' : 'muted');
   dp(p+'.15', 'STATE openLong',      st.openLong ? (st.openLong.fillConfirmed ? 'FILLED @ ' + fmtPrice(st.openLong.fillPrice, st.tick) : 'PENDING entry ' + fmtPrice(st.openLong.entry, st.tick)) : 'none', st.openLong ? (st.openLong.fillConfirmed ? 'ok' : 'warn') : 'muted');
 
-  const recentHigh  = Math.max(...raw.slice(-3).map(c => c.high));
+  // Wick-based: used only for fill detection (we want fills on real price visits)
   const recentLow   = Math.min(...raw.slice(-3).map(c => c.low));
-  const recentWidth = recentHigh - recentLow;
-  dp(p+'.16', '3C RECENT HIGH', fmtPrice(recentHigh, st.tick), 'info');
-  dp(p+'.17', '3C RECENT LOW',  fmtPrice(recentLow,  st.tick), 'info');
+  // Close-based: used for tightening decisions (closes reflect sustained price, not wick spikes)
+  const recentCloseHigh = Math.max(...raw.slice(-3).map(c => c.close));
+  const recentCloseLow  = Math.min(...raw.slice(-3).map(c => c.close));
+  const recentCloseWidth = recentCloseHigh - recentCloseLow;
+  dp(p+'.16', '3C CLOSE HIGH', fmtPrice(recentCloseHigh, st.tick), 'info');
+  dp(p+'.17', '3C CLOSE LOW',  fmtPrice(recentCloseLow,  st.tick), 'info');
 
   // ── ORPHAN HANDLER ──────────────────────────────────────────────────────────
   if (st.openLong && st.openLong.fillConfirmed && !st.inOsc) {
@@ -823,20 +826,23 @@ async function processSym(sym) {
 
     const curWidth = st.oscUpper - st.oscLower;
     dp(p+'.19', 'BAND NOW', fmtPrice(st.oscLower,st.tick) + ' – ' + fmtPrice(st.oscUpper,st.tick) + ' (' + Math.round(curWidth/st.tick) + 'tk)', 'info');
-    dp(p+'.20', '3C WIDTH vs BAND', recentWidth.toFixed(5) + ' vs ' + curWidth.toFixed(5), recentWidth < curWidth - st.tick * 0.5 ? 'warn' : 'muted');
+    dp(p+'.20', '3C CLOSE WIDTH vs BAND', recentCloseWidth.toFixed(5) + ' vs ' + curWidth.toFixed(5), recentCloseWidth < curWidth - st.tick * 0.5 ? 'warn' : 'muted');
 
-    const canTighten = recentWidth < curWidth - st.tick * 0.5 && (!st.openLong || !st.openLong.fillConfirmed);
+    // Tighten check uses CLOSE-based range so a single wick spike above the band
+    // does not block tightening when closes are clearly clustered in a narrower zone.
+    // New band boundaries are also close-based so TP is achievable given real price action.
+    const canTighten = recentCloseWidth < curWidth - st.tick * 0.5 && (!st.openLong || !st.openLong.fillConfirmed);
     if (canTighten) {
-      dp(p+'.21', 'BAND TIGHTEN', 'new band: ' + fmtPrice(recentLow,st.tick) + ' – ' + fmtPrice(recentHigh,st.tick), 'warn');
-      st.oscUpper = recentHigh;
-      st.oscLower = recentLow;
+      dp(p+'.21', 'BAND TIGHTEN', 'new band: ' + fmtPrice(recentCloseLow,st.tick) + ' – ' + fmtPrice(recentCloseHigh,st.tick) + ' (close-based)', 'warn');
+      st.oscUpper = recentCloseHigh;
+      st.oscLower = recentCloseLow;
       if (st.openLong) {
-        st.openLong.entry     = recentLow;
-        st.openLong.target    = recentHigh;
-        st.openLong.sl        = recentLow - 2 * st.tick;
-        st.openLong.bandLower = recentLow;
-        st.openLong.bandUpper = recentHigh;
-        st.openLong.bandTicks = Math.round(recentWidth / st.tick);
+        st.openLong.entry     = recentCloseLow;
+        st.openLong.target    = recentCloseHigh;
+        st.openLong.sl        = recentCloseLow - 2 * st.tick;
+        st.openLong.bandLower = recentCloseLow;
+        st.openLong.bandUpper = recentCloseHigh;
+        st.openLong.bandTicks = Math.round(recentCloseWidth / st.tick);
       }
     } else if ((!st.openLong || !st.openLong.fillConfirmed) && osc.lower < st.oscLower && Math.abs(osc.lower - st.oscLower) >= st.tick) {
       // Band drifted DOWNWARD by ≥1 tick — track it for unfilled trades.
