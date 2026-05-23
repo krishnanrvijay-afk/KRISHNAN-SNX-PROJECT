@@ -1057,6 +1057,8 @@ function renderClock() {
   const t = new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(new Date());
   document.getElementById('clock').textContent = t + ' ' + nyTzName();
   document.getElementById('sessionLabel').textContent = sessionName(edtHour());
+  const cd = document.getElementById('candle-cd');
+  if (cd) { const s = 60 - new Date().getUTCSeconds(); cd.textContent = 'next ' + (s === 60 ? 60 : s) + 's'; }
 }
 
 function renderSession() {
@@ -1185,7 +1187,8 @@ function renderTicker(sym) {
 
   const priceGrid = '<div class="bp-grid">' +
     '<div class="bp-cell"><div class="bp-cell-label">Candle Close</div>' +
-      '<div class="bp-cell-value yellow">'+fmtPrice(st.displayPrice || st.lastPrice,st.tick)+'</div></div>' +
+      '<div class="bp-cell-value yellow">'+fmtPrice(st.displayPrice || st.lastPrice,st.tick)+'</div>' +
+      '<div id="candle-cd" style="font-size:9px;color:var(--muted);margin-top:2px;font-family:JetBrains Mono,monospace">--s</div></div>' +
     '<div class="bp-cell"><div class="bp-cell-label">Session P&L</div>' +
       '<div class="bp-cell-value '+pnlCls+'">'+fmtPnl(net)+'</div></div>' +
     '<div class="bp-cell"><div class="bp-cell-label">Win Rate</div>' +
