@@ -331,7 +331,9 @@ const TOKEN_CONFIG = {
 const SYMBOLS        = ['FILUSDT'];
 const TAKER_FEE      = 0.0002;
 const MAKER_FEE      = 0;
-const POLL_MS        = 10000;
+const POLL_DETECT    = 30000;   // no band yet — only 1m closes matter
+const POLL_ARMED     =  5000;   // limit order pending — fast fill detection
+const POLL_FILLED    = 10000;   // position open — monitoring TP/SL
 const DEPTH_POLL     = 30000;
 const CANDLE_INT     = 'Min1';
 const CONFIRM_COUNT  = 3;      // consecutive same-tick closes needed to confirm band
@@ -1584,8 +1586,27 @@ async function poll() {
     renderTicker(sym);
   }));
   renderCombined();
+  const nms = nextPollMs();
+  const nMode = nms === POLL_ARMED ? 'ARMED' : nms === POLL_FILLED ? 'FILLED' : 'DETECT';
+  dp(pollCount+'.ADJ', 'NEXT POLL', (nms/1000)+'s · mode='+nMode, nms === POLL_ARMED ? 'warn' : nms === POLL_FILLED ? 'ok' : 'muted');
   renderDiag();
   if (document.getElementById('tab-trades').classList.contains('active')) renderFullLog();
+}
+
+// ── ADAPTIVE POLL INTERVAL ────────────────────────────────────────────────────
+// Returns the tightest interval needed across all active symbols.
+//   POLL_FILLED  (10s) — any position is filled and open
+//   POLL_ARMED   ( 5s) — any limit order is pending fill
+//   POLL_DETECT  (30s) — only watching for oscillator band
+function nextPollMs() {
+  for (const sym of SYMBOLS) {
+    const st = state[sym];
+    const lng = st.openLong;
+    const sht = st.openShort;
+    if ((lng && lng.fillConfirmed) || (sht && sht.fillConfirmed)) return POLL_FILLED;
+    if ((lng && !lng.fillConfirmed) || (sht && !sht.fillConfirmed)) return POLL_ARMED;
+  }
+  return POLL_DETECT;
 }
 
 // ── INIT ──────────────────────────────────────────────────────────────────────
@@ -1596,8 +1617,10 @@ setInterval(renderClock, 1000);
 setInterval(renderSession, 60000);
 renderClock();
 renderSession();
-poll();
-setInterval(poll, POLL_MS);
+(async function schedulePoll() {
+  await poll();
+  setTimeout(schedulePoll, nextPollMs());
+})();
 pollDepth();
 setInterval(pollDepth, DEPTH_POLL);
 </script>
