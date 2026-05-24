@@ -124,6 +124,26 @@
   .tick-dot.filled { background: #ffd740; border-color: #ffd740; box-shadow: 0 0 6px #ffd740; }
   .tick-dot.confirmed { background: #00e676; border-color: #00e676; box-shadow: 0 0 8px #00e676; }
   .tick-count-label { font-family: 'Bebas Neue', sans-serif; font-size: 14px; letter-spacing: 1px; color: #fff; font-weight: 700; margin-left: 6px; }
+  /* Pattern tracker — 6-slot visual during band detection */
+  .pattern-track { padding: 10px 14px 8px; border-bottom: 1px dashed #222; }
+  .pt-slots { display: grid; grid-template-columns: repeat(6, 1fr); gap: 5px; margin-bottom: 7px; }
+  .pt-slot { text-align: center; padding: 5px 2px 4px; border-radius: 5px; border: 1px solid #222; }
+  .pt-slot.confirmed { border-color: #00e676; background: rgba(0,230,118,0.07); }
+  .pt-slot.active    { border-color: #ffd740; background: rgba(255,215,64,0.1); animation: ptpulse 1.2s ease-in-out infinite; }
+  .pt-slot.future    { border-color: #1a2a1a; opacity: 0.35; }
+  .pt-label { font-size: 9px; font-weight: 700; letter-spacing: 1px; color: #555; margin-bottom: 2px; }
+  .pt-slot.confirmed .pt-label { color: #00e676; }
+  .pt-slot.active    .pt-label { color: #ffd740; }
+  .pt-price { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #888; }
+  .pt-slot.confirmed .pt-price { color: #00e676; }
+  .pt-slot.active    .pt-price { color: #ffd740; font-size: 12px; font-weight: 700; }
+  .pt-tick  { font-size: 10px; color: #444; margin-top: 2px; }
+  .pt-slot.confirmed .pt-tick { color: #00e676; }
+  .pt-slot.active    .pt-tick { color: #ffd740; }
+  .pt-needs { font-size: 11px; color: #888; padding: 2px 0 3px; }
+  .pt-needs-price { color: #ffd740; font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 13px; }
+  .pt-reset { font-size: 10px; color: #ff5252; padding: 2px 0 1px; font-family: 'JetBrains Mono', monospace; }
+  @keyframes ptpulse { 0%,100%{opacity:1} 50%{opacity:0.55} }
 
   /* ── UNREALIZED PNL ROW ── */
   .bp-unr-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 14px; border-bottom: 1px dashed #222; }
@@ -431,6 +451,7 @@ SYMBOLS.forEach(s => {
     shadowPrice1: null,    // display field
     shadowPrice2: null,    // display field
     unrPnl:       0,       // live unrealized PNL ($) of open filled position
+    tpLastReset:  null,    // last reset msg e.g. "Got 0.9780 · needed 0.9770 at step 4"
   };
 });
 
@@ -693,10 +714,11 @@ function updateTickPair(sym, candle) {
 
   // ── Step 1: capture Price1a ──────────────────────────────────────────────────
   if (st.tpStep === 1) {
-    st.tpPrice1a = price;
-    st.tpPrice1b = null;
-    st.tpCounter = 0;
-    st.tpStep    = 2;
+    st.tpPrice1a   = price;
+    st.tpPrice1b   = null;
+    st.tpCounter   = 0;
+    st.tpStep      = 2;
+    st.tpLastReset = null; // clear previous reset message on fresh start
     dp(p+'.TP2', 'OSC 1/6', 'P1a='+fmtPrice(price,st.tick)+' — waiting for P1b', 'muted');
     return null;
   }
@@ -723,11 +745,9 @@ function updateTickPair(sym, candle) {
       st.tpStep    = 4;
       dp(p+'.TP2', 'OSC 3/6', 'c3=P1a ✓ counter=2 — need c4=P1b', 'warn');
     } else {
+      st.tpLastReset = 'Got '+fmtPrice(price,st.tick)+' · needed '+fmtPrice(st.tpPrice1a,st.tick)+' at step 3';
       dp(p+'.TP2', 'OSC RESET', 'c3 '+fmtPrice(price,st.tick)+' ≠ P1a '+fmtPrice(st.tpPrice1a,st.tick)+' → restart', 'muted');
-      st.tpPrice1a = null;
-      st.tpPrice1b = null;
-      st.tpCounter = 0;
-      st.tpStep    = 1;
+      st.tpPrice1a = null; st.tpPrice1b = null; st.tpCounter = 0; st.tpStep = 1;
     }
     return null;
   }
@@ -738,11 +758,9 @@ function updateTickPair(sym, candle) {
       st.tpStep = 5;
       dp(p+'.TP2', 'OSC 4/6', 'c4=P1b ✓ — need c5=P1a', 'warn');
     } else {
+      st.tpLastReset = 'Got '+fmtPrice(price,st.tick)+' · needed '+fmtPrice(st.tpPrice1b,st.tick)+' at step 4';
       dp(p+'.TP2', 'OSC RESET', 'c4 '+fmtPrice(price,st.tick)+' ≠ P1b '+fmtPrice(st.tpPrice1b,st.tick)+' → restart', 'muted');
-      st.tpPrice1a = null;
-      st.tpPrice1b = null;
-      st.tpCounter = 0;
-      st.tpStep    = 1;
+      st.tpPrice1a = null; st.tpPrice1b = null; st.tpCounter = 0; st.tpStep = 1;
     }
     return null;
   }
@@ -754,11 +772,9 @@ function updateTickPair(sym, candle) {
       st.tpStep    = 6;
       dp(p+'.TP2', 'OSC 5/6', 'c5=P1a ✓ counter=3 — need c6=P1b', 'warn');
     } else {
+      st.tpLastReset = 'Got '+fmtPrice(price,st.tick)+' · needed '+fmtPrice(st.tpPrice1a,st.tick)+' at step 5';
       dp(p+'.TP2', 'OSC RESET', 'c5 '+fmtPrice(price,st.tick)+' ≠ P1a '+fmtPrice(st.tpPrice1a,st.tick)+' → restart', 'muted');
-      st.tpPrice1a = null;
-      st.tpPrice1b = null;
-      st.tpCounter = 0;
-      st.tpStep    = 1;
+      st.tpPrice1a = null; st.tpPrice1b = null; st.tpCounter = 0; st.tpStep = 1;
     }
     return null;
   }
@@ -773,11 +789,9 @@ function updateTickPair(sym, candle) {
         ' · band '+fmtPrice(lower,st.tick)+' – '+fmtPrice(upper,st.tick)+' counter=3', 'ok');
       return { confirmed: true, lower, upper };
     } else {
+      st.tpLastReset = 'Got '+fmtPrice(price,st.tick)+' · needed '+fmtPrice(st.tpPrice1b,st.tick)+' at step 6';
       dp(p+'.TP2', 'OSC RESET', 'c6 '+fmtPrice(price,st.tick)+' ≠ P1b '+fmtPrice(st.tpPrice1b,st.tick)+' → restart', 'muted');
-      st.tpPrice1a = null;
-      st.tpPrice1b = null;
-      st.tpCounter = 0;
-      st.tpStep    = 1;
+      st.tpPrice1a = null; st.tpPrice1b = null; st.tpCounter = 0; st.tpStep = 1;
       return null;
     }
   }
@@ -1188,23 +1202,53 @@ function renderTicker(sym) {
     badgeHtml += '<span class="badge" style="background:rgba(255,215,64,0.12);color:#ffd740;border:1px solid rgba(255,215,64,0.35);margin-left:4px">DRIFT</span>';
   }
 
-  // Oscillator progress dots — 3 dots tracking tpCounter (0→1→2→3=confirmed)
-  const liveTpCounter = st.tpCounter;
-  const dots = Array.from({length: 3}, (_,i) => {
-    const cls = i < liveTpCounter ? (liveTpCounter >= 3 ? 'confirmed' : 'filled') : '';
-    return '<div class="tick-dot '+cls+'"></div>';
-  }).join('');
-  const oscStepLabel = st.tpStep <= 2
-    ? 'STEP '+st.tpStep+'/6'+(st.tpPrice1a ? ' · P1a='+fmtPrice(st.tpPrice1a,st.tick) : '')
-    : 'STEP '+st.tpStep+'/6 · P1a='+fmtPrice(st.tpPrice1a||0,st.tick)+' P1b='+fmtPrice(st.tpPrice1b||0,st.tick);
-  const tickStripHtml = '<div class="bp-tick-strip">' + dots +
-    '<span class="tick-count-label">' +
-    (st.inDrift
-      ? 'BAND DRIFT · SHADOW ' + st.shadowCount + '/' + CONFIRM_COUNT + ' @ ' + fmtPrice(st.oscLower - st.tick, st.tick) + '–' + fmtPrice(st.oscLower, st.tick)
-      : st.inOsc
-        ? 'BAND CONFIRMED ' + fmtPrice(st.oscLower,st.tick) + ' – ' + fmtPrice(st.oscUpper,st.tick)
-        : 'A-B-A-B-A · ' + oscStepLabel + ' · counter=' + liveTpCounter + '/3') +
-    '</span></div>';
+  // ── Tick strip (band confirmed) OR pattern tracker (detecting) ──────────────
+  let tickStripHtml;
+  if (st.inOsc) {
+    // Band confirmed — keep the existing dot/label strip
+    const liveTpCounter = st.tpCounter;
+    const dots = Array.from({length: 3}, (_,i) => {
+      const cls = i < liveTpCounter ? (liveTpCounter >= 3 ? 'confirmed' : 'filled') : '';
+      return '<div class="tick-dot '+cls+'"></div>';
+    }).join('');
+    tickStripHtml = '<div class="bp-tick-strip">'+dots+
+      '<span class="tick-count-label">BAND CONFIRMED '+fmtPrice(st.oscLower,st.tick)+' – '+fmtPrice(st.oscUpper,st.tick)+'</span></div>';
+  } else {
+    // Detection in progress — 6-slot visual pattern tracker
+    const confirmedCount = Math.max(0, st.tpStep - 1);
+    const slotLabels  = ['A','B','A','B','A','B'];
+    const slotPrices  = [st.tpPrice1a, st.tpPrice1b, st.tpPrice1a, st.tpPrice1b, st.tpPrice1a, st.tpPrice1b];
+    const slotsHtml   = slotLabels.map((lbl, i) => {
+      if (i < confirmedCount) {
+        return '<div class="pt-slot confirmed">'+
+          '<div class="pt-label">'+lbl+'</div>'+
+          '<div class="pt-price">'+fmtPrice(slotPrices[i], st.tick)+'</div>'+
+          '<div class="pt-tick">✓</div></div>';
+      } else if (i === confirmedCount && st.tpStep >= 2) {
+        const np = slotPrices[i];
+        return '<div class="pt-slot active">'+
+          '<div class="pt-label">'+lbl+'</div>'+
+          '<div class="pt-price">'+(np ? fmtPrice(np, st.tick) : '?')+'</div>'+
+          '<div class="pt-tick">→</div></div>';
+      } else {
+        return '<div class="pt-slot future">'+
+          '<div class="pt-label">'+lbl+'</div>'+
+          '<div class="pt-price">—</div>'+
+          '<div class="pt-tick"> </div></div>';
+      }
+    }).join('');
+    const neededPrice = (st.tpStep >= 2) ? slotPrices[confirmedCount] : null;
+    const needsLine = neededPrice
+      ? '<div class="pt-needs">Next close must be <span class="pt-needs-price">'+fmtPrice(neededPrice, st.tick)+'</span></div>'
+      : '<div class="pt-needs" style="color:#444">Waiting for first candle...</div>';
+    const resetLine = st.tpLastReset
+      ? '<div class="pt-reset">↺ '+st.tpLastReset+'</div>'
+      : '';
+    tickStripHtml = '<div class="pattern-track">'+
+      '<div class="pt-slots">'+slotsHtml+'</div>'+
+      needsLine + resetLine +
+    '</div>';
+  }
 
   // Shadow buffer dots (only visible during drift)
   let shadowStripHtml = '';
