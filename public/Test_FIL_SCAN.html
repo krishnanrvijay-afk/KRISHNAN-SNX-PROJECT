@@ -351,7 +351,7 @@ const TOKEN_CONFIG = {
 const SYMBOLS        = ['FILUSDT'];
 const TAKER_FEE      = 0.0002;
 const MAKER_FEE      = 0;
-const POLL_DETECT    = 30000;   // no band yet — only 1m closes matter
+const POLL_DETECT    = 20000;   // detecting band — sample live price every 20s
 const POLL_ARMED     =  5000;   // limit order pending — fast fill detection
 const POLL_FILLED    = 10000;   // position open — monitoring TP/SL
 const DEPTH_POLL     = 30000;
@@ -428,7 +428,7 @@ SYMBOLS.forEach(s => {
     tpPrice1a:    null,    // A price (candles 1,3,5)
     tpPrice1b:    null,    // B price (candles 2,4)
     tpCounter:    0,       // confirmation counter: 1 after P1b, 2 after c3, 3 after c5 (=confirmed)
-    tpLastCandleTs: null,  // ts of last processed candle
+    tpLastStepTs:   0,     // Date.now() of last step advance (20s debounce)
     // band state (set once tpCount >= CONFIRM_COUNT)
     inOsc: false,
     oscLower: 0,
@@ -625,7 +625,7 @@ function resetBand(sym, reason) {
   st.tpCounter       = 0;
   // clear lastCandleTs so the spike/SL candle is never seeded into
   // the new pattern — detection always starts from the NEXT candle after reset.
-  st.tpLastCandleTs  = null;
+  st.tpLastStepTs    = 0;
   st.cycleTradeCount = 0;
   st.activeDir       = 'LONG';
   st.action          = 'WAIT';
@@ -706,8 +706,9 @@ function updateTickPair(sym, candle) {
   const st = state[sym];
   const p  = pollCount;
 
-  if (candle.ts === st.tpLastCandleTs) return null;
-  st.tpLastCandleTs = candle.ts;
+  const now = Date.now();
+  if (now - st.tpLastStepTs < 15000) return null; // debounce: one step per ~20s poll
+  st.tpLastStepTs = now;
 
   const price = roundTick(candle.close, st.tick);
   dp(p+'.TP1', 'TICK-PAIR CLOSE', fmtPrice(candle.close,st.tick)+' → tick '+fmtPrice(price,st.tick), 'info');
@@ -859,12 +860,10 @@ async function processSym(sym) {
   if (isNewCandle) { st.lastCandleTs = last.ts; st.displayPrice = last.close; }
   dp(p+'.8', 'CANDLE', isNewCandle ? 'NEW — processing tick-pair' : 'LIVE — intra-poll checks only', isNewCandle ? 'ok' : 'muted');
 
-  // ── SECTION A: TICK-PAIR DETECTION (only on new candles, band not yet confirmed) ──
-  if (!st.inOsc && isNewCandle) {
-    // At step 1 (startup or post-reset): scan existing history first — no wait needed
-    // if the last 6 candles already form A-B-A-B-A-B.
-    let result = (st.tpStep === 1) ? tryRetroConfirm(sym, raw, p) : null;
-    if (!result) result = updateTickPair(sym, last);
+  // ── SECTION A: TICK-PAIR DETECTION (every 20s poll, band not yet confirmed) ──
+  // Runs on every poll — 15s debounce inside updateTickPair prevents double-stepping.
+  if (!st.inOsc) {
+    const result = updateTickPair(sym, last);
     dp(p+'.9', 'OSC COUNTER', st.tpCounter+'/3 · step='+st.tpStep+'/6'+(st.tpPrice1a?' P1a='+fmtPrice(st.tpPrice1a,st.tick):'')+(st.tpPrice1b?' P1b='+fmtPrice(st.tpPrice1b,st.tick):''), st.tpCounter >= 3 ? 'ok' : 'muted');
 
     if (result && result.confirmed) {
@@ -1563,7 +1562,7 @@ function clearAll() {
     st.tpPrice2        = null;
     st.tpCount         = 0;
     st.tpBuffer        = [];
-    st.tpLastCandleTs  = null;
+    st.tpLastStepTs    = 0;
     st.oscLower        = 0;
     st.oscUpper        = 0;
     st.bandConfirmCount = 0;
