@@ -666,7 +666,7 @@ function updateShadowBuffer(sym, price) {
 }
 
 // ── TICK-PAIR OSCILLATOR ───────────────────────────────────────────────────────
-// A-B-A-B-A pattern: 5 consecutive 1-minute candle closes must alternate
+// A-B-A-B-A-B pattern: 6 consecutive 1-minute candle closes must alternate
 // strictly between exactly two prices (Price1a and Price1b).
 //
 // Step machine:
@@ -674,9 +674,10 @@ function updateShadowBuffer(sym, price) {
 //   Step 2 — second candle → Price1b (must differ from P1a); counter = 1
 //   Step 3 — third candle  must == Price1a  → counter = 2
 //   Step 4 — fourth candle must == Price1b
-//   Step 5 — fifth candle  must == Price1a  → counter = 3 → CONFIRMED
+//   Step 5 — fifth candle  must == Price1a  → counter = 3
+//   Step 6 — sixth candle  must == Price1b  → CONFIRMED
 //
-// Any mismatch at steps 3–5 restarts with the mismatching candle as new Price1a.
+// Any mismatch at steps 3–6 restarts with the mismatching candle as new Price1a.
 // Band = [min(P1a,P1b), max(P1a,P1b)].
 function updateTickPair(sym, candle) {
   const st = state[sym];
@@ -694,7 +695,7 @@ function updateTickPair(sym, candle) {
     st.tpPrice1b = null;
     st.tpCounter = 0;
     st.tpStep    = 2;
-    dp(p+'.TP2', 'OSC 1/5', 'P1a='+fmtPrice(price,st.tick)+' — waiting for P1b', 'muted');
+    dp(p+'.TP2', 'OSC 1/6', 'P1a='+fmtPrice(price,st.tick)+' — waiting for P1b', 'muted');
     return null;
   }
 
@@ -703,13 +704,13 @@ function updateTickPair(sym, candle) {
     if (price === st.tpPrice1a) {
       // Same price — re-anchor P1a, stay at step 2
       st.tpPrice1a = price;
-      dp(p+'.TP2', 'OSC 1/5', 'P1a='+fmtPrice(price,st.tick)+' (re-anchor) — waiting for P1b', 'muted');
+      dp(p+'.TP2', 'OSC 1/6', 'P1a='+fmtPrice(price,st.tick)+' (re-anchor) — waiting for P1b', 'muted');
       return null;
     }
     st.tpPrice1b = price;
     st.tpCounter = 1;
     st.tpStep    = 3;
-    dp(p+'.TP2', 'OSC 2/5', 'P1a='+fmtPrice(st.tpPrice1a,st.tick)+' P1b='+fmtPrice(price,st.tick)+' counter=1 — need c3=P1a', 'warn');
+    dp(p+'.TP2', 'OSC 2/6', 'P1a='+fmtPrice(st.tpPrice1a,st.tick)+' P1b='+fmtPrice(price,st.tick)+' counter=1 — need c3=P1a', 'warn');
     return null;
   }
 
@@ -718,7 +719,7 @@ function updateTickPair(sym, candle) {
     if (price === st.tpPrice1a) {
       st.tpCounter = 2;
       st.tpStep    = 4;
-      dp(p+'.TP2', 'OSC 3/5', 'c3=P1a ✓ counter=2 — need c4=P1b', 'warn');
+      dp(p+'.TP2', 'OSC 3/6', 'c3=P1a ✓ counter=2 — need c4=P1b', 'warn');
     } else {
       dp(p+'.TP2', 'OSC RESET', 'c3 '+fmtPrice(price,st.tick)+' ≠ P1a '+fmtPrice(st.tpPrice1a,st.tick)+' → restart', 'muted');
       st.tpPrice1a = price;
@@ -733,7 +734,7 @@ function updateTickPair(sym, candle) {
   if (st.tpStep === 4) {
     if (price === st.tpPrice1b) {
       st.tpStep = 5;
-      dp(p+'.TP2', 'OSC 4/5', 'c4=P1b ✓ — need c5=P1a', 'warn');
+      dp(p+'.TP2', 'OSC 4/6', 'c4=P1b ✓ — need c5=P1a', 'warn');
     } else {
       dp(p+'.TP2', 'OSC RESET', 'c4 '+fmtPrice(price,st.tick)+' ≠ P1b '+fmtPrice(st.tpPrice1b,st.tick)+' → restart', 'muted');
       st.tpPrice1a = price;
@@ -744,19 +745,33 @@ function updateTickPair(sym, candle) {
     return null;
   }
 
-  // ── Step 5: fifth candle must == Price1a → CONFIRMED ─────────────────────────
+  // ── Step 5: fifth candle must == Price1a ─────────────────────────────────────
   if (st.tpStep === 5) {
     if (price === st.tpPrice1a) {
       st.tpCounter = 3;
       st.tpStep    = 6;
+      dp(p+'.TP2', 'OSC 5/6', 'c5=P1a ✓ counter=3 — need c6=P1b', 'warn');
+    } else {
+      dp(p+'.TP2', 'OSC RESET', 'c5 '+fmtPrice(price,st.tick)+' ≠ P1a '+fmtPrice(st.tpPrice1a,st.tick)+' → restart', 'muted');
+      st.tpPrice1a = price;
+      st.tpPrice1b = null;
+      st.tpCounter = 0;
+      st.tpStep    = 2;
+    }
+    return null;
+  }
+
+  // ── Step 6: sixth candle must == Price1b → CONFIRMED ─────────────────────────
+  if (st.tpStep === 6) {
+    if (price === st.tpPrice1b) {
       const lower = +(Math.min(st.tpPrice1a, st.tpPrice1b)).toFixed(7);
       const upper = +(Math.max(st.tpPrice1a, st.tpPrice1b)).toFixed(7);
       dp(p+'.TP3', 'BAND CONFIRMED',
-        'A-B-A-B-A · P1a='+fmtPrice(st.tpPrice1a,st.tick)+' P1b='+fmtPrice(st.tpPrice1b,st.tick)+
+        'A-B-A-B-A-B · P1a='+fmtPrice(st.tpPrice1a,st.tick)+' P1b='+fmtPrice(st.tpPrice1b,st.tick)+
         ' · band '+fmtPrice(lower,st.tick)+' – '+fmtPrice(upper,st.tick)+' counter=3', 'ok');
       return { confirmed: true, lower, upper };
     } else {
-      dp(p+'.TP2', 'OSC RESET', 'c5 '+fmtPrice(price,st.tick)+' ≠ P1a '+fmtPrice(st.tpPrice1a,st.tick)+' → restart', 'muted');
+      dp(p+'.TP2', 'OSC RESET', 'c6 '+fmtPrice(price,st.tick)+' ≠ P1b '+fmtPrice(st.tpPrice1b,st.tick)+' → restart', 'muted');
       st.tpPrice1a = price;
       st.tpPrice1b = null;
       st.tpCounter = 0;
@@ -803,7 +818,7 @@ async function processSym(sym) {
   // ── SECTION A: TICK-PAIR DETECTION (only on new candles, band not yet confirmed) ──
   if (!st.inOsc && isNewCandle) {
     const result = updateTickPair(sym, last);
-    dp(p+'.9', 'OSC COUNTER', st.tpCounter+'/3 · step='+st.tpStep+'/5'+(st.tpPrice1a?' P1a='+fmtPrice(st.tpPrice1a,st.tick):'')+(st.tpPrice1b?' P1b='+fmtPrice(st.tpPrice1b,st.tick):''), st.tpCounter >= 3 ? 'ok' : 'muted');
+    dp(p+'.9', 'OSC COUNTER', st.tpCounter+'/3 · step='+st.tpStep+'/6'+(st.tpPrice1a?' P1a='+fmtPrice(st.tpPrice1a,st.tick):'')+(st.tpPrice1b?' P1b='+fmtPrice(st.tpPrice1b,st.tick):''), st.tpCounter >= 3 ? 'ok' : 'muted');
 
     if (result && result.confirmed) {
       st.inOsc        = true;
@@ -820,7 +835,7 @@ async function processSym(sym) {
         st.action = 'WAIT';
       }
     } else {
-      dp(p+'.10', 'WAITING FOR BAND', 'A-B-A-B-A · step '+st.tpStep+'/5 · counter='+st.tpCounter+'/3', 'muted');
+      dp(p+'.10', 'WAITING FOR BAND', 'A-B-A-B-A-B · step '+st.tpStep+'/6 · counter='+st.tpCounter+'/3', 'muted');
       st.action = 'WAIT';
     }
     return;
@@ -1215,8 +1230,8 @@ function renderTicker(sym) {
     return '<div class="tick-dot '+cls+'"></div>';
   }).join('');
   const oscStepLabel = st.tpStep <= 2
-    ? 'STEP '+st.tpStep+'/5'+(st.tpPrice1a ? ' · P1a='+fmtPrice(st.tpPrice1a,st.tick) : '')
-    : 'STEP '+st.tpStep+'/5 · P1a='+fmtPrice(st.tpPrice1a||0,st.tick)+' P1b='+fmtPrice(st.tpPrice1b||0,st.tick);
+    ? 'STEP '+st.tpStep+'/6'+(st.tpPrice1a ? ' · P1a='+fmtPrice(st.tpPrice1a,st.tick) : '')
+    : 'STEP '+st.tpStep+'/6 · P1a='+fmtPrice(st.tpPrice1a||0,st.tick)+' P1b='+fmtPrice(st.tpPrice1b||0,st.tick);
   const tickStripHtml = '<div class="bp-tick-strip">' + dots +
     '<span class="tick-count-label">' +
     (st.inDrift
