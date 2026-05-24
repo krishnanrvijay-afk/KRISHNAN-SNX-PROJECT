@@ -785,6 +785,34 @@ function updateTickPair(sym, candle) {
   return null;
 }
 
+// ── RETROSPECTIVE BAND SCAN ───────────────────────────────────────────────────
+// On startup or after any reset (tpStep === 1), check whether the last 6 candles
+// already form A-B-A-B-A-B. If yes, confirm the band immediately — no waiting.
+// After an SL reset the breakdown candle is in history and will naturally fail
+// the pattern check, so no false re-entry is possible.
+function tryRetroConfirm(sym, raw, p) {
+  const st   = state[sym];
+  const tick = st.tick;
+  if (raw.length < 6) return null;
+
+  const last6  = raw.slice(-6);
+  const prices = last6.map(c => roundTick(c.close, tick));
+  const p1a = prices[0];
+  const p1b = prices[1];
+  if (p1a === p1b) return null;
+
+  for (let i = 0; i < 6; i++) {
+    if (prices[i] !== ((i % 2 === 0) ? p1a : p1b)) return null;
+  }
+
+  const lower = +(Math.min(p1a, p1b)).toFixed(7);
+  const upper = +(Math.max(p1a, p1b)).toFixed(7);
+  dp(p+'.TP3', 'BAND CONFIRMED',
+    'A-B-A-B-A-B in history · P1a='+fmtPrice(p1a,tick)+' P1b='+fmtPrice(p1b,tick)+
+    ' · band '+fmtPrice(lower,tick)+' – '+fmtPrice(upper,tick)+' (retro)', 'ok');
+  return { confirmed: true, lower, upper };
+}
+
 // ── CORE PROCESS ──────────────────────────────────────────────────────────────
 async function processSym(sym) {
   pollCount++;
@@ -819,7 +847,10 @@ async function processSym(sym) {
 
   // ── SECTION A: TICK-PAIR DETECTION (only on new candles, band not yet confirmed) ──
   if (!st.inOsc && isNewCandle) {
-    const result = updateTickPair(sym, last);
+    // At step 1 (startup or post-reset): scan existing history first — no wait needed
+    // if the last 6 candles already form A-B-A-B-A-B.
+    let result = (st.tpStep === 1) ? tryRetroConfirm(sym, raw, p) : null;
+    if (!result) result = updateTickPair(sym, last);
     dp(p+'.9', 'OSC COUNTER', st.tpCounter+'/3 · step='+st.tpStep+'/6'+(st.tpPrice1a?' P1a='+fmtPrice(st.tpPrice1a,st.tick):'')+(st.tpPrice1b?' P1b='+fmtPrice(st.tpPrice1b,st.tick):''), st.tpCounter >= 3 ? 'ok' : 'muted');
 
     if (result && result.confirmed) {
