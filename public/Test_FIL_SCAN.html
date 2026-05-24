@@ -708,13 +708,15 @@ function updateTickPair(sym, candle) {
 
   const now = Date.now();
   if (now - st.tpLastStepTs < 15000) return null; // debounce: one step per ~20s poll
-  st.tpLastStepTs = now;
+  // NOTE: tpLastStepTs is updated only on actual step advances, NOT on re-anchors.
+  // Re-anchors at step 2 (same price as P1a) return early without consuming the slot.
 
   const price = roundTick(candle.close, st.tick);
   dp(p+'.TP1', 'TICK-PAIR CLOSE', fmtPrice(candle.close,st.tick)+' → tick '+fmtPrice(price,st.tick), 'info');
 
   // ── Step 1: capture Price1a ──────────────────────────────────────────────────
   if (st.tpStep === 1) {
+    st.tpLastStepTs = now;
     st.tpPrice1a   = price;
     st.tpPrice1b   = null;
     st.tpCounter   = 0;
@@ -727,11 +729,13 @@ function updateTickPair(sym, candle) {
   // ── Step 2: capture Price1b (must differ from P1a) ──────────────────────────
   if (st.tpStep === 2) {
     if (price === st.tpPrice1a) {
-      // Same price — re-anchor P1a, stay at step 2
+      // Same price — re-anchor P1a, stay at step 2.
+      // Do NOT update tpLastStepTs: re-anchor is free, next poll tries P1b immediately.
       st.tpPrice1a = price;
       dp(p+'.TP2', 'OSC 1/6', 'P1a='+fmtPrice(price,st.tick)+' (re-anchor) — waiting for P1b', 'muted');
       return null;
     }
+    st.tpLastStepTs = now;
     st.tpPrice1b = price;
     st.tpCounter = 1;
     st.tpStep    = 3;
@@ -741,6 +745,7 @@ function updateTickPair(sym, candle) {
 
   // ── Step 3: third candle must == Price1a ─────────────────────────────────────
   if (st.tpStep === 3) {
+    st.tpLastStepTs = now;
     if (price === st.tpPrice1a) {
       st.tpCounter = 2;
       st.tpStep    = 4;
@@ -755,6 +760,7 @@ function updateTickPair(sym, candle) {
 
   // ── Step 4: fourth candle must == Price1b ────────────────────────────────────
   if (st.tpStep === 4) {
+    st.tpLastStepTs = now;
     if (price === st.tpPrice1b) {
       st.tpStep = 5;
       dp(p+'.TP2', 'OSC 4/6', 'c4=P1b ✓ — need c5=P1a', 'warn');
@@ -768,6 +774,7 @@ function updateTickPair(sym, candle) {
 
   // ── Step 5: fifth candle must == Price1a ─────────────────────────────────────
   if (st.tpStep === 5) {
+    st.tpLastStepTs = now;
     if (price === st.tpPrice1a) {
       st.tpCounter = 3;
       st.tpStep    = 6;
@@ -782,6 +789,7 @@ function updateTickPair(sym, candle) {
 
   // ── Step 6: sixth candle must == Price1b → CONFIRMED ─────────────────────────
   if (st.tpStep === 6) {
+    st.tpLastStepTs = now;
     if (price === st.tpPrice1b) {
       const lower = +(Math.min(st.tpPrice1a, st.tpPrice1b)).toFixed(7);
       const upper = +(Math.max(st.tpPrice1a, st.tpPrice1b)).toFixed(7);
@@ -858,7 +866,7 @@ async function processSym(sym) {
 
   const isNewCandle = last.ts !== st.lastCandleTs;
   if (isNewCandle) { st.lastCandleTs = last.ts; st.displayPrice = last.close; }
-  dp(p+'.8', 'CANDLE', isNewCandle ? 'NEW — processing tick-pair' : 'LIVE — intra-poll checks only', isNewCandle ? 'ok' : 'muted');
+  dp(p+'.8', 'CANDLE', isNewCandle ? 'NEW — processing tick-pair' : 'LIVE — 20s sample · detection + trade checks', isNewCandle ? 'ok' : 'muted');
 
   // ── SECTION A: TICK-PAIR DETECTION (every 20s poll, band not yet confirmed) ──
   // Runs on every poll — 15s debounce inside updateTickPair prevents double-stepping.
