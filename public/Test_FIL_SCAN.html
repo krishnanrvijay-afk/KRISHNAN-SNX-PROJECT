@@ -131,13 +131,13 @@
   .pt-slot.confirmed { border-color: #00e676; background: rgba(0,230,118,0.07); }
   .pt-slot.active    { border-color: #ffd740; background: rgba(255,215,64,0.1); animation: ptpulse 1.2s ease-in-out infinite; }
   .pt-slot.future    { border-color: #1a2a1a; opacity: 0.35; }
-  .pt-label { font-size: 9px; font-weight: 700; letter-spacing: 1px; color: #555; margin-bottom: 2px; }
+  .pt-label { font-size: 11px; font-weight: 700; letter-spacing: 1px; color: #555; margin-bottom: 3px; }
   .pt-slot.confirmed .pt-label { color: #00e676; }
   .pt-slot.active    .pt-label { color: #ffd740; }
-  .pt-price { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #888; }
-  .pt-slot.confirmed .pt-price { color: #00e676; }
-  .pt-slot.active    .pt-price { color: #ffd740; font-size: 12px; font-weight: 700; }
-  .pt-tick  { font-size: 10px; color: #444; margin-top: 2px; }
+  .pt-price { font-family: 'JetBrains Mono', monospace; font-size: 14px; font-weight: 700; color: #888; }
+  .pt-slot.confirmed .pt-price { color: #00e676; font-size: 14px; }
+  .pt-slot.active    .pt-price { color: #ffd740; font-size: 15px; }
+  .pt-tick  { font-size: 12px; color: #444; margin-top: 2px; }
   .pt-slot.confirmed .pt-tick { color: #00e676; }
   .pt-slot.active    .pt-tick { color: #ffd740; }
   .pt-needs { font-size: 11px; color: #888; padding: 2px 0 3px; }
@@ -1280,8 +1280,14 @@ function renderTicker(sym) {
   const wins  = today.filter(t => t.outcome==='WIN').length;
   const pnlCls = net >= 0 ? 'green' : 'red';
 
+  // Label for the live price cell: adapts to what the price is actually being used for
+  const priceCellLabel = !st.inOsc
+    ? 'Live Price'                                        // being compared against A/B steps
+    : (activeTrade && activeTrade.fillConfirmed)
+      ? 'Close vs SL'                                    // SL fires on close below/above band
+      : 'Last Price';
   const priceGrid = '<div class="bp-grid">' +
-    '<div class="bp-cell"><div class="bp-cell-label">Candle Close</div>' +
+    '<div class="bp-cell"><div class="bp-cell-label">'+priceCellLabel+'</div>' +
       '<div class="bp-cell-value yellow">'+fmtPrice(st.displayPrice || st.lastPrice,st.tick)+'</div>' +
       '<div id="candle-cd" style="font-size:13px;color:#00e5ff;font-weight:700;margin-top:3px;font-family:JetBrains Mono,monospace">--s</div></div>' +
     '<div class="bp-cell"><div class="bp-cell-label">Session P&L</div>' +
