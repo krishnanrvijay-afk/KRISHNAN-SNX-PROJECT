@@ -722,10 +722,10 @@ function updateTickPair(sym, candle) {
       dp(p+'.TP2', 'OSC 3/6', 'c3=P1a ✓ counter=2 — need c4=P1b', 'warn');
     } else {
       dp(p+'.TP2', 'OSC RESET', 'c3 '+fmtPrice(price,st.tick)+' ≠ P1a '+fmtPrice(st.tpPrice1a,st.tick)+' → restart', 'muted');
-      st.tpPrice1a = price;
+      st.tpPrice1a = null;
       st.tpPrice1b = null;
       st.tpCounter = 0;
-      st.tpStep    = 2;
+      st.tpStep    = 1;
     }
     return null;
   }
@@ -737,10 +737,10 @@ function updateTickPair(sym, candle) {
       dp(p+'.TP2', 'OSC 4/6', 'c4=P1b ✓ — need c5=P1a', 'warn');
     } else {
       dp(p+'.TP2', 'OSC RESET', 'c4 '+fmtPrice(price,st.tick)+' ≠ P1b '+fmtPrice(st.tpPrice1b,st.tick)+' → restart', 'muted');
-      st.tpPrice1a = price;
+      st.tpPrice1a = null;
       st.tpPrice1b = null;
       st.tpCounter = 0;
-      st.tpStep    = 2;
+      st.tpStep    = 1;
     }
     return null;
   }
@@ -753,10 +753,10 @@ function updateTickPair(sym, candle) {
       dp(p+'.TP2', 'OSC 5/6', 'c5=P1a ✓ counter=3 — need c6=P1b', 'warn');
     } else {
       dp(p+'.TP2', 'OSC RESET', 'c5 '+fmtPrice(price,st.tick)+' ≠ P1a '+fmtPrice(st.tpPrice1a,st.tick)+' → restart', 'muted');
-      st.tpPrice1a = price;
+      st.tpPrice1a = null;
       st.tpPrice1b = null;
       st.tpCounter = 0;
-      st.tpStep    = 2;
+      st.tpStep    = 1;
     }
     return null;
   }
@@ -772,10 +772,10 @@ function updateTickPair(sym, candle) {
       return { confirmed: true, lower, upper };
     } else {
       dp(p+'.TP2', 'OSC RESET', 'c6 '+fmtPrice(price,st.tick)+' ≠ P1b '+fmtPrice(st.tpPrice1b,st.tick)+' → restart', 'muted');
-      st.tpPrice1a = price;
+      st.tpPrice1a = null;
       st.tpPrice1b = null;
       st.tpCounter = 0;
-      st.tpStep    = 2;
+      st.tpStep    = 1;
       return null;
     }
   }
