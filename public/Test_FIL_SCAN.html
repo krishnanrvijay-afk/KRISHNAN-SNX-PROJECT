@@ -401,10 +401,11 @@ SYMBOLS.forEach(s => {
   state[s] = {
     // candle history
     candles: [], tick: 0.0001,
-    // tick-pair oscillator state
-    tpPrice1: null,        // first stored price (tick-rounded)
-    tpPrice2: null,        // second stored price (tick-rounded)
-    tpCount: 0,            // consecutive same-tick close count
+    // tick-pair oscillator state — A-B-A-B-A step machine
+    tpStep:       1,       // step: 1=need P1a, 2=need P1b, 3=c3=P1a?, 4=c4=P1b?, 5=c5=P1a?
+    tpPrice1a:    null,    // A price (candles 1,3,5)
+    tpPrice1b:    null,    // B price (candles 2,4)
+    tpCounter:    0,       // confirmation counter: 1 after P1b, 2 after c3, 3 after c5 (=confirmed)
     tpLastCandleTs: null,  // ts of last processed candle
     // band state (set once tpCount >= CONFIRM_COUNT)
     inOsc: false,
@@ -595,12 +596,12 @@ function resetBand(sym, reason) {
   st.inOsc           = false;
   st.oscLower        = 0;
   st.oscUpper        = 0;
-  st.tpPrice1        = null;
-  st.tpPrice2        = null;
-  st.tpBuffer        = [];
-  st.tpCount         = 0;
-  // Fix A: clear lastCandleTs so the spike/SL candle is never seeded into
-  // the new buffer — detection always starts from the NEXT candle after reset.
+  st.tpStep          = 1;
+  st.tpPrice1a       = null;
+  st.tpPrice1b       = null;
+  st.tpCounter       = 0;
+  // clear lastCandleTs so the spike/SL candle is never seeded into
+  // the new pattern — detection always starts from the NEXT candle after reset.
   st.tpLastCandleTs  = null;
   st.cycleTradeCount = 0;
   st.activeDir       = 'LONG';
@@ -665,73 +666,103 @@ function updateShadowBuffer(sym, price) {
 }
 
 // ── TICK-PAIR OSCILLATOR ───────────────────────────────────────────────────────
-// Returns { confirmed: bool, lower, upper } or null if still accumulating.
+// A-B-A-B-A pattern: 5 consecutive 1-minute candle closes must alternate
+// strictly between exactly two prices (Price1a and Price1b).
 //
-// Detection rule: last CONFIRM_COUNT candle closes (tick-rounded) must ALL fall
-// within a 1-tick range of each other.  This catches both:
-//   • Three identical closes:          0.9670, 0.9670, 0.9670 → range = 0 ✓
-//   • Two-tick alternation (the bug):  0.9680, 0.9670, 0.9680 → range = 1 tick ✓
-//   • Any close 2+ ticks away resets the rolling buffer.
+// Step machine:
+//   Step 1 — first candle  → Price1a
+//   Step 2 — second candle → Price1b (must differ from P1a); counter = 1
+//   Step 3 — third candle  must == Price1a  → counter = 2
+//   Step 4 — fourth candle must == Price1b
+//   Step 5 — fifth candle  must == Price1a  → counter = 3 → CONFIRMED
 //
-// Band = [min of buffer, min + 1 tick].
+// Any mismatch at steps 3–5 restarts with the mismatching candle as new Price1a.
+// Band = [min(P1a,P1b), max(P1a,P1b)].
 function updateTickPair(sym, candle) {
   const st = state[sym];
   const p  = pollCount;
 
-  // Skip if this candle was already processed
   if (candle.ts === st.tpLastCandleTs) return null;
   st.tpLastCandleTs = candle.ts;
 
   const price = roundTick(candle.close, st.tick);
-  dp(p+'.TP1', 'TICK-PAIR CLOSE', fmtPrice(candle.close, st.tick) + ' → tick ' + fmtPrice(price, st.tick), 'info');
+  dp(p+'.TP1', 'TICK-PAIR CLOSE', fmtPrice(candle.close,st.tick)+' → tick '+fmtPrice(price,st.tick), 'info');
 
-  // Initialise buffer if needed
-  if (!st.tpBuffer) st.tpBuffer = [];
-
-  // Check if the new price fits within the current buffer's 1-tick window
-  if (st.tpBuffer.length > 0) {
-    const bufMin = Math.min(...st.tpBuffer);
-    const bufMax = Math.max(...st.tpBuffer);
-    const newMin = Math.min(bufMin, price);
-    const newMax = Math.max(bufMax, price);
-    const rangeOk = Math.round((newMax - newMin) / st.tick) <= 1;
-
-    if (!rangeOk) {
-      // Price broke out of 1-tick window — reset buffer, start fresh with this candle
-      dp(p+'.TP2', 'TICK-PAIR RESET', 'price '+fmtPrice(price,st.tick)+' broke window '+fmtPrice(bufMin,st.tick)+'-'+fmtPrice(bufMax,st.tick)+' → restart', 'muted');
-      st.tpBuffer = [price];
-      st.tpCount  = 1;
-      // keep tpPrice1/tpPrice2 in sync for the display dots
-      st.tpPrice1 = price;
-      st.tpPrice2 = null;
-      return null;
-    }
+  // ── Step 1: capture Price1a ──────────────────────────────────────────────────
+  if (st.tpStep === 1) {
+    st.tpPrice1a = price;
+    st.tpPrice1b = null;
+    st.tpCounter = 0;
+    st.tpStep    = 2;
+    dp(p+'.TP2', 'OSC 1/5', 'P1a='+fmtPrice(price,st.tick)+' — waiting for P1b', 'muted');
+    return null;
   }
 
-  // Price fits — push into rolling buffer (keep only last CONFIRM_COUNT)
-  st.tpBuffer.push(price);
-  if (st.tpBuffer.length > CONFIRM_COUNT) st.tpBuffer.shift();
-  st.tpCount = st.tpBuffer.length;
-
-  // Update display fields
-  st.tpPrice1 = st.tpBuffer[0] || null;
-  st.tpPrice2 = st.tpBuffer[1] || null;
-
-  dp(p+'.TP2', 'TICK-PAIR BUFFER',
-    st.tpBuffer.map(v => fmtPrice(v, st.tick)).join(', ') + '  count='+st.tpCount+'/'+CONFIRM_COUNT,
-    st.tpCount >= CONFIRM_COUNT ? 'ok' : 'warn');
-
-  if (st.tpCount >= CONFIRM_COUNT) {
-    const lower = +(Math.min(...st.tpBuffer)).toFixed(7);
-    const upper = +(lower + st.tick).toFixed(7);
-    const distinct = new Set(st.tpBuffer.map(v => v.toFixed(7))).size;
-    if (distinct < 2) {
-      dp(p+'.TP3', 'BAND REJECTED', 'all '+CONFIRM_COUNT+' closes identical ('+fmtPrice(lower,st.tick)+') — flat market, need 2 distinct prices', 'warn');
+  // ── Step 2: capture Price1b (must differ from P1a) ──────────────────────────
+  if (st.tpStep === 2) {
+    if (price === st.tpPrice1a) {
+      // Same price — re-anchor P1a, stay at step 2
+      st.tpPrice1a = price;
+      dp(p+'.TP2', 'OSC 1/5', 'P1a='+fmtPrice(price,st.tick)+' (re-anchor) — waiting for P1b', 'muted');
       return null;
     }
-    dp(p+'.TP3', 'BAND CONFIRMED',
-      fmtPrice(lower,st.tick)+' – '+fmtPrice(upper,st.tick)+' ('+CONFIRM_COUNT+'c within 1 tick, '+distinct+' distinct)', 'ok');
-    return { confirmed: true, lower, upper };
+    st.tpPrice1b = price;
+    st.tpCounter = 1;
+    st.tpStep    = 3;
+    dp(p+'.TP2', 'OSC 2/5', 'P1a='+fmtPrice(st.tpPrice1a,st.tick)+' P1b='+fmtPrice(price,st.tick)+' counter=1 — need c3=P1a', 'warn');
+    return null;
+  }
+
+  // ── Step 3: third candle must == Price1a ─────────────────────────────────────
+  if (st.tpStep === 3) {
+    if (price === st.tpPrice1a) {
+      st.tpCounter = 2;
+      st.tpStep    = 4;
+      dp(p+'.TP2', 'OSC 3/5', 'c3=P1a ✓ counter=2 — need c4=P1b', 'warn');
+    } else {
+      dp(p+'.TP2', 'OSC RESET', 'c3 '+fmtPrice(price,st.tick)+' ≠ P1a '+fmtPrice(st.tpPrice1a,st.tick)+' → restart', 'muted');
+      st.tpPrice1a = price;
+      st.tpPrice1b = null;
+      st.tpCounter = 0;
+      st.tpStep    = 2;
+    }
+    return null;
+  }
+
+  // ── Step 4: fourth candle must == Price1b ────────────────────────────────────
+  if (st.tpStep === 4) {
+    if (price === st.tpPrice1b) {
+      st.tpStep = 5;
+      dp(p+'.TP2', 'OSC 4/5', 'c4=P1b ✓ — need c5=P1a', 'warn');
+    } else {
+      dp(p+'.TP2', 'OSC RESET', 'c4 '+fmtPrice(price,st.tick)+' ≠ P1b '+fmtPrice(st.tpPrice1b,st.tick)+' → restart', 'muted');
+      st.tpPrice1a = price;
+      st.tpPrice1b = null;
+      st.tpCounter = 0;
+      st.tpStep    = 2;
+    }
+    return null;
+  }
+
+  // ── Step 5: fifth candle must == Price1a → CONFIRMED ─────────────────────────
+  if (st.tpStep === 5) {
+    if (price === st.tpPrice1a) {
+      st.tpCounter = 3;
+      st.tpStep    = 6;
+      const lower = +(Math.min(st.tpPrice1a, st.tpPrice1b)).toFixed(7);
+      const upper = +(Math.max(st.tpPrice1a, st.tpPrice1b)).toFixed(7);
+      dp(p+'.TP3', 'BAND CONFIRMED',
+        'A-B-A-B-A · P1a='+fmtPrice(st.tpPrice1a,st.tick)+' P1b='+fmtPrice(st.tpPrice1b,st.tick)+
+        ' · band '+fmtPrice(lower,st.tick)+' – '+fmtPrice(upper,st.tick)+' counter=3', 'ok');
+      return { confirmed: true, lower, upper };
+    } else {
+      dp(p+'.TP2', 'OSC RESET', 'c5 '+fmtPrice(price,st.tick)+' ≠ P1a '+fmtPrice(st.tpPrice1a,st.tick)+' → restart', 'muted');
+      st.tpPrice1a = price;
+      st.tpPrice1b = null;
+      st.tpCounter = 0;
+      st.tpStep    = 2;
+      return null;
+    }
   }
 
   return null;
@@ -772,7 +803,7 @@ async function processSym(sym) {
   // ── SECTION A: TICK-PAIR DETECTION (only on new candles, band not yet confirmed) ──
   if (!st.inOsc && isNewCandle) {
     const result = updateTickPair(sym, last);
-    dp(p+'.9', 'TP COUNT', st.tpCount+'/'+CONFIRM_COUNT+' (P1='+fmtPrice(st.tpPrice1||0,st.tick)+' P2='+fmtPrice(st.tpPrice2||0,st.tick)+')', st.tpCount >= CONFIRM_COUNT ? 'ok' : 'muted');
+    dp(p+'.9', 'OSC COUNTER', st.tpCounter+'/3 · step='+st.tpStep+'/5'+(st.tpPrice1a?' P1a='+fmtPrice(st.tpPrice1a,st.tick):'')+(st.tpPrice1b?' P1b='+fmtPrice(st.tpPrice1b,st.tick):''), st.tpCounter >= 3 ? 'ok' : 'muted');
 
     if (result && result.confirmed) {
       st.inOsc        = true;
@@ -789,7 +820,7 @@ async function processSym(sym) {
         st.action = 'WAIT';
       }
     } else {
-      dp(p+'.10', 'WAITING FOR BAND', 'need '+CONFIRM_COUNT+'x same tick · count='+st.tpCount, 'muted');
+      dp(p+'.10', 'WAITING FOR BAND', 'A-B-A-B-A · step '+st.tpStep+'/5 · counter='+st.tpCounter+'/3', 'muted');
       st.action = 'WAIT';
     }
     return;
@@ -1153,7 +1184,7 @@ function renderTicker(sym) {
   let borderCls = 'border-wait';
   if (act === 'SAME_TRADE' || act === 'SHORT_ARMED' || act === 'SHORT_FILLED') borderCls = 'border-short';
   else if (act === 'ARMED') borderCls = 'border-armed';
-  else if (act === 'WAIT' && st.tpCount > 0) borderCls = 'border-new';
+  else if (act === 'WAIT' && st.tpCounter > 0) borderCls = 'border-new';
 
   card.className = 'ticker-card ' + borderCls;
 
@@ -1177,20 +1208,22 @@ function renderTicker(sym) {
     badgeHtml += '<span class="badge" style="background:rgba(255,215,64,0.12);color:#ffd740;border:1px solid rgba(255,215,64,0.35);margin-left:4px">DRIFT</span>';
   }
 
-  // Tick-pair progress dots
-  // Fix C: always use live tpCount for dots — reflects 0→3 on every cycle restart
-  const liveTpCount = st.tpCount;
-  const dots = Array.from({length: CONFIRM_COUNT}, (_,i) => {
-    const cls = i < liveTpCount ? (liveTpCount >= CONFIRM_COUNT ? 'confirmed' : 'filled') : '';
+  // Oscillator progress dots — 3 dots tracking tpCounter (0→1→2→3=confirmed)
+  const liveTpCounter = st.tpCounter;
+  const dots = Array.from({length: 3}, (_,i) => {
+    const cls = i < liveTpCounter ? (liveTpCounter >= 3 ? 'confirmed' : 'filled') : '';
     return '<div class="tick-dot '+cls+'"></div>';
   }).join('');
+  const oscStepLabel = st.tpStep <= 2
+    ? 'STEP '+st.tpStep+'/5'+(st.tpPrice1a ? ' · P1a='+fmtPrice(st.tpPrice1a,st.tick) : '')
+    : 'STEP '+st.tpStep+'/5 · P1a='+fmtPrice(st.tpPrice1a||0,st.tick)+' P1b='+fmtPrice(st.tpPrice1b||0,st.tick);
   const tickStripHtml = '<div class="bp-tick-strip">' + dots +
     '<span class="tick-count-label">' +
     (st.inDrift
       ? 'BAND DRIFT · SHADOW ' + st.shadowCount + '/' + CONFIRM_COUNT + ' @ ' + fmtPrice(st.oscLower - st.tick, st.tick) + '–' + fmtPrice(st.oscLower, st.tick)
       : st.inOsc
         ? 'BAND CONFIRMED ' + fmtPrice(st.oscLower,st.tick) + ' – ' + fmtPrice(st.oscUpper,st.tick)
-        : 'TICK-PAIR: ' + liveTpCount + ' / ' + CONFIRM_COUNT + ' SAME CLOSES') +
+        : 'A-B-A-B-A · ' + oscStepLabel + ' · counter=' + liveTpCounter + '/3') +
     '</span></div>';
 
   // Shadow buffer dots (only visible during drift)
