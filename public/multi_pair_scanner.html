@@ -351,9 +351,9 @@ const CANDLE_INT     = 'Min1';
 const MAX_HOLD_CANDLES = 8;    // force-exit after this many post-fill candles
 // ── ZONE-WINDOW DETECTION (replaces strict A-B-A-B-A-B step machine) ──────────
 const ZONE_TOLERANCE  = 0;    // extra ticks wide per zone (0 = strict; raise to 1 to catch 2-tick swings)
-const ZONE_WINDOW_N   = 6;    // rolling sample window — same depth as old 6-step machine
-const ZONE_WINDOW_K   = 6;    // all 6 must be in-zone (tolerance is from zone flexibility, not misses)
-const ZONE_MIN_EACH   = 2;    // min samples required in EACH zone (L and H)
+const ZONE_WINDOW_N   = 4;    // 4 samples × 20s poll = ~80s minimum detection — matches manual read speed
+const ZONE_WINDOW_K   = 4;    // all 4 must be in-zone — no misses tolerated at this window size
+const ZONE_MIN_EACH   = 2;    // need at least 2L and 2H — minimum proof of two-sided oscillation
 const BAND_HOLD_HOURS = 4;    // hold a confirmed band this many hours if off-hours before expiry
 const BLACKOUT_H     = [9, 10];
 
