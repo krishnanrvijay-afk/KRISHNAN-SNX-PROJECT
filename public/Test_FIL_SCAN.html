@@ -553,7 +553,7 @@ function buildTrade(sym, direction, entry, target, sl, detectionPrice, candle) {
 
 function openLong(sym, candle) {
   const st = state[sym];
-  const t  = buildTrade(sym, 'LONG', st.oscLower, st.oscUpper, st.oscLower - 2 * st.tick, candle ? candle.close : st.lastPrice, candle);
+  const t  = buildTrade(sym, 'LONG', st.oscLower, st.oscUpper, st.oscLower - st.tick, candle ? candle.close : st.lastPrice, candle);
   st.openLong  = t;
   st.openShort = null;
   st.activeDir = 'LONG';
@@ -562,7 +562,7 @@ function openLong(sym, candle) {
 
 function openShort(sym, candle) {
   const st = state[sym];
-  const t  = buildTrade(sym, 'SHORT', st.oscUpper, st.oscLower, st.oscUpper + 2 * st.tick, candle ? candle.close : st.lastPrice, candle);
+  const t  = buildTrade(sym, 'SHORT', st.oscUpper, st.oscLower, st.oscUpper + st.tick, candle ? candle.close : st.lastPrice, candle);
   st.openShort = t;
   st.openLong  = null;
   st.activeDir = 'SHORT';
@@ -866,9 +866,9 @@ async function processSym(sym) {
         const fillLow = fillCandles.length ? Math.min(...fillCandles.map(c => c.low)) : Infinity;
         dp(p+'.11', 'LONG FILL CHECK', 'fillLow='+fmtPrice(fillLow,st.tick)+' vs E='+fmtPrice(lng.entry,st.tick), fillLow <= lng.entry ? 'ok' : 'muted');
 
-        if (fillLow <= lng.sl) {
-          // Swept through both entry AND SL — spike, discard and reset band
-          dp(p+'.12', 'LONG SPIKE SWEEP', 'low hit SL before entry confirmed — reset', 'bad');
+        if (fillLow < st.oscLower) {
+          // Swept through entry AND below band lower — spike, discard and reset band
+          dp(p+'.12', 'LONG SPIKE SWEEP', 'low broke below band lower before entry confirmed — reset', 'bad');
           st.openLong = null;
           resetBand(sym, 'spike swept through long SL without clean fill');
           return;
@@ -899,13 +899,13 @@ async function processSym(sym) {
 
       // Unrealized PNL — recalculate every poll while position is open
       st.unrPnl = +(TOKEN_CONFIG[sym].notional * (last.close - lng.entry) / lng.entry).toFixed(2);
-      dp(p+'.13u', 'UNREALIZED PNL', fmtPnl(st.unrPnl)+' @ '+fmtPrice(last.close,st.tick), st.unrPnl >= 0 ? 'ok' : (st.inDrift ? 'warn' : 'info'));
+      dp(p+'.13u', 'UNREALIZED PNL', fmtPnl(st.unrPnl)+' @ '+fmtPrice(last.close,st.tick), st.unrPnl >= 0 ? 'ok' : 'warn');
 
       const pfC = raw.filter(c => c.ts > lng.filledAtCandleTs);
       if (!pfC.length) {
         // Intra-fill-candle TP check: if current candle high already hit target, take profit now
         if (last.close >= lng.target) {
-          st.inDrift = false; st.shadowBuffer = []; st.shadowCount = 0; st.unrPnl = 0;
+          st.unrPnl = 0;
           dp(p+'.14', 'LONG TP IMMEDIATE', fmtPrice(last.close,st.tick)+' >= '+fmtPrice(lng.target,st.tick)+' → WIN (fill candle)', 'ok');
           closeTrade(sym, lng, lng.target, 'TP');
           st.cycleTradeCount++;
@@ -915,10 +915,10 @@ async function processSym(sym) {
           if (!inBlackout()) openShort(sym, last);
           return;
         }
-        if (last.close <= lng.sl) {
-          st.inDrift = false; st.shadowBuffer = []; st.shadowCount = 0; st.unrPnl = 0;
-          dp(p+'.14', 'LONG SL IMMEDIATE', fmtPrice(last.close,st.tick)+' <= '+fmtPrice(lng.sl,st.tick)+' → LOSS (fill candle)', 'bad');
-          closeTrade(sym, lng, lng.sl, 'SL');
+        if (last.close < st.oscLower) {
+          st.unrPnl = 0;
+          dp(p+'.14', 'LONG SL IMMEDIATE', fmtPrice(last.close,st.tick)+' < band lower '+fmtPrice(st.oscLower,st.tick)+' → LOSS (fill candle)', 'bad');
+          closeTrade(sym, lng, last.close, 'SL');
           resetBand(sym, 'long SL immediate — band broken');
           return;
         }
@@ -931,8 +931,8 @@ async function processSym(sym) {
       dp(p+'.14', 'LONG POST-FILL', pfC.length+'c · hi='+fmtPrice(pfHigh,st.tick)+' lo='+fmtPrice(pfLow,st.tick), 'info');
 
       if (pfHigh >= lng.target) {
-        // TP — clear drift, flip to SHORT
-        st.inDrift = false; st.shadowBuffer = []; st.shadowCount = 0; st.unrPnl = 0;
+        // TP — flip to SHORT
+        st.unrPnl = 0;
         dp(p+'.15', 'LONG TP HIT', fmtPrice(pfHigh,st.tick)+' >= '+fmtPrice(lng.target,st.tick)+' → WIN', 'ok');
         closeTrade(sym, lng, lng.target, 'TP');
         st.cycleTradeCount++;
@@ -940,10 +940,13 @@ async function processSym(sym) {
         st.activeDir = 'SHORT';
         st.action    = 'SHORT_ARMED';
         if (!inBlackout()) openShort(sym, last);
-      } else if (pfLow <= lng.sl) {
-        // Hard SL (now 2 ticks below band lower)
-        dp(p+'.15', 'LONG SL HIT', fmtPrice(pfLow,st.tick)+' <= '+fmtPrice(lng.sl,st.tick)+' → LOSS · RESET', 'bad');
-        closeTrade(sym, lng, lng.sl, 'SL');
+      } else if (pfC.some(c => roundTick(c.close, st.tick) < st.oscLower)) {
+        // Close below band lower — band broken
+        const slCandle = pfC.find(c => roundTick(c.close, st.tick) < st.oscLower);
+        const exitPx   = roundTick(slCandle.close, st.tick);
+        st.unrPnl = 0;
+        dp(p+'.15', 'LONG SL HIT', 'close '+fmtPrice(exitPx,st.tick)+' < band lower '+fmtPrice(st.oscLower,st.tick)+' → LOSS · RESET', 'bad');
+        closeTrade(sym, lng, exitPx, 'SL');
         resetBand(sym, 'long SL hit — band broken');
       } else if (pfC.length >= MAX_HOLD_CANDLES) {
         dp(p+'.15', 'LONG TIMEOUT', pfC.length+'c max hold — exit @ '+fmtPrice(last.close,st.tick), 'bad');
@@ -952,43 +955,6 @@ async function processSym(sym) {
       } else {
         dp(p+'.15', 'LONG HOLDING', pfC.length+'/'+MAX_HOLD_CANDLES+'c · hi='+fmtPrice(pfHigh,st.tick)+' lo='+fmtPrice(pfLow,st.tick), 'warn');
         st.action = 'SAME_TRADE';
-
-        // ── DRIFT DETECTION (new candles only) ──────────────────────────────
-        // Drift zone: close OR candle low is below oscLower but above hard SL
-        if (isNewCandle) {
-          const cp = roundTick(last.close, st.tick);
-          const lastPfCandle = pfC.length > 0 ? pfC[pfC.length - 1] : null;
-          const pfLastLow = lastPfCandle ? roundTick(lastPfCandle.low, st.tick) : cp;
-          if ((cp < st.oscLower || pfLastLow < st.oscLower) && cp > lng.sl) {
-            if (!st.inDrift) {
-              st.inDrift      = true;
-              st.shadowBuffer = [];
-              st.shadowCount  = 0;
-              const trigger = cp < st.oscLower ? 'close '+fmtPrice(cp,st.tick) : 'candle low '+fmtPrice(pfLastLow,st.tick);
-              dp(p+'.DR1', 'DRIFT START', trigger+' below band '+fmtPrice(st.oscLower,st.tick)+' — shadow counting', 'warn');
-            }
-            dp(p+'.DR2', 'DRIFT STATUS', 'unr '+fmtPnl(st.unrPnl)+' · shadow '+st.shadowCount+'/'+CONFIRM_COUNT, 'warn');
-            const shadowResult = updateShadowBuffer(sym, cp);
-            if (shadowResult) {
-              // Shadow band confirmed — scratch at entry ($0.00) and migrate band down
-              dp(p+'.DR4', 'PATTERN SHIFT', 'scratch @ entry '+fmtPrice(lng.entry,st.tick)+' ($0.00) → new band '+fmtPrice(shadowResult.lower,st.tick)+' – '+fmtPrice(shadowResult.upper,st.tick), 'ok');
-              closeTrade(sym, lng, lng.entry, 'SCRATCH');
-              st.oscLower     = shadowResult.lower;
-              st.oscUpper     = shadowResult.upper;
-              st.inDrift      = false;
-              st.shadowBuffer = [];
-              st.shadowCount  = 0;
-              st.unrPnl       = 0;
-              if (!inBlackout()) openLong(sym, last);
-            }
-          } else if (st.inDrift && cp >= st.oscLower && cp < st.oscUpper) {
-            // Price recovered to entry level — scratch at entry ($0.00) and re-arm same band
-            dp(p+'.DR1', 'DRIFT RECOVERY', 'price back to '+fmtPrice(cp,st.tick)+' → scratch @ entry · re-arm same band', 'ok');
-            closeTrade(sym, lng, lng.entry, 'SCRATCH');
-            st.inDrift = false; st.shadowBuffer = []; st.shadowCount = 0; st.unrPnl = 0;
-            if (!inBlackout()) openLong(sym, last);
-          }
-        }
       }
     }
 
@@ -1011,9 +977,9 @@ async function processSym(sym) {
         const fillHigh = fillCandles.length ? Math.max(...fillCandles.map(c => c.high)) : -Infinity;
         dp(p+'.11', 'SHORT FILL CHECK', 'fillHigh='+fmtPrice(fillHigh,st.tick)+' vs E='+fmtPrice(sht.entry,st.tick), fillHigh >= sht.entry ? 'purple' : 'muted');
 
-        if (fillHigh >= sht.sl) {
-          // Swept through short entry AND SL — spike up, reset
-          dp(p+'.12', 'SHORT SPIKE SWEEP', 'high hit SL before short confirmed — reset', 'bad');
+        if (fillHigh > st.oscUpper) {
+          // Swept above band upper before short confirmed — spike up, reset
+          dp(p+'.12', 'SHORT SPIKE SWEEP', 'high broke above band upper before short confirmed — reset', 'bad');
           st.openShort = null;
           resetBand(sym, 'spike swept through short SL without clean fill');
           return;
@@ -1044,13 +1010,13 @@ async function processSym(sym) {
 
       // Unrealized PNL — recalculate every poll while position is open
       st.unrPnl = +(TOKEN_CONFIG[sym].notional * (sht.entry - last.close) / sht.entry).toFixed(2);
-      dp(p+'.13u', 'UNREALIZED PNL', fmtPnl(st.unrPnl)+' @ '+fmtPrice(last.close,st.tick), st.unrPnl >= 0 ? 'ok' : (st.inDrift ? 'warn' : 'info'));
+      dp(p+'.13u', 'UNREALIZED PNL', fmtPnl(st.unrPnl)+' @ '+fmtPrice(last.close,st.tick), st.unrPnl >= 0 ? 'ok' : 'warn');
 
       const pfC = raw.filter(c => c.ts > sht.filledAtCandleTs);
       if (!pfC.length) {
         // Intra-fill-candle TP check: if current candle low already hit target, take profit now
         if (last.close <= sht.target) {
-          st.inDrift = false; st.shadowBuffer = []; st.shadowCount = 0; st.unrPnl = 0;
+          st.unrPnl = 0;
           dp(p+'.14', 'SHORT TP IMMEDIATE', fmtPrice(last.close,st.tick)+' <= '+fmtPrice(sht.target,st.tick)+' → WIN (fill candle)', 'ok');
           closeTrade(sym, sht, sht.target, 'TP');
           st.cycleTradeCount++;
@@ -1060,10 +1026,10 @@ async function processSym(sym) {
           if (!inBlackout()) openLong(sym, last);
           return;
         }
-        if (last.close >= sht.sl) {
-          st.inDrift = false; st.shadowBuffer = []; st.shadowCount = 0; st.unrPnl = 0;
-          dp(p+'.14', 'SHORT SL IMMEDIATE', fmtPrice(last.close,st.tick)+' >= '+fmtPrice(sht.sl,st.tick)+' → LOSS (fill candle)', 'bad');
-          closeTrade(sym, sht, sht.sl, 'SL');
+        if (last.close > st.oscUpper) {
+          st.unrPnl = 0;
+          dp(p+'.14', 'SHORT SL IMMEDIATE', fmtPrice(last.close,st.tick)+' > band upper '+fmtPrice(st.oscUpper,st.tick)+' → LOSS (fill candle)', 'bad');
+          closeTrade(sym, sht, last.close, 'SL');
           resetBand(sym, 'short SL immediate — band broken');
           return;
         }
@@ -1076,8 +1042,8 @@ async function processSym(sym) {
       dp(p+'.14', 'SHORT POST-FILL', pfC.length+'c · hi='+fmtPrice(pfHigh,st.tick)+' lo='+fmtPrice(pfLow,st.tick), 'info');
 
       if (pfLow <= sht.target) {
-        // TP — clear drift, flip to LONG
-        st.inDrift = false; st.shadowBuffer = []; st.shadowCount = 0; st.unrPnl = 0;
+        // TP — flip to LONG
+        st.unrPnl = 0;
         dp(p+'.15', 'SHORT TP HIT', fmtPrice(pfLow,st.tick)+' <= '+fmtPrice(sht.target,st.tick)+' → WIN', 'ok');
         closeTrade(sym, sht, sht.target, 'TP');
         st.cycleTradeCount++;
@@ -1085,10 +1051,13 @@ async function processSym(sym) {
         st.activeDir = 'LONG';
         st.action    = 'ARMED';
         if (!inBlackout()) openLong(sym, last);
-      } else if (pfHigh >= sht.sl) {
-        // Hard SL (now 2 ticks above band upper)
-        dp(p+'.15', 'SHORT SL HIT', fmtPrice(pfHigh,st.tick)+' >= '+fmtPrice(sht.sl,st.tick)+' → LOSS · RESET', 'bad');
-        closeTrade(sym, sht, sht.sl, 'SL');
+      } else if (pfC.some(c => roundTick(c.close, st.tick) > st.oscUpper)) {
+        // Close above band upper — band broken
+        const slCandle = pfC.find(c => roundTick(c.close, st.tick) > st.oscUpper);
+        const exitPx   = roundTick(slCandle.close, st.tick);
+        st.unrPnl = 0;
+        dp(p+'.15', 'SHORT SL HIT', 'close '+fmtPrice(exitPx,st.tick)+' > band upper '+fmtPrice(st.oscUpper,st.tick)+' → LOSS · RESET', 'bad');
+        closeTrade(sym, sht, exitPx, 'SL');
         resetBand(sym, 'short SL hit — band broken');
       } else if (pfC.length >= MAX_HOLD_CANDLES) {
         dp(p+'.15', 'SHORT TIMEOUT', pfC.length+'c max hold — exit @ '+fmtPrice(last.close,st.tick), 'bad');
@@ -1097,43 +1066,6 @@ async function processSym(sym) {
       } else {
         dp(p+'.15', 'SHORT HOLDING', pfC.length+'/'+MAX_HOLD_CANDLES+'c · hi='+fmtPrice(pfHigh,st.tick)+' lo='+fmtPrice(pfLow,st.tick), 'warn');
         st.action = 'SHORT_FILLED';
-
-        // ── DRIFT DETECTION (new candles only) ──────────────────────────────
-        // Drift zone: close OR candle high is above oscUpper but below hard SL
-        if (isNewCandle) {
-          const cp = roundTick(last.close, st.tick);
-          const lastPfCandle = pfC.length > 0 ? pfC[pfC.length - 1] : null;
-          const pfLastHigh = lastPfCandle ? roundTick(lastPfCandle.high, st.tick) : cp;
-          if ((cp > st.oscUpper || pfLastHigh > st.oscUpper) && cp < sht.sl) {
-            if (!st.inDrift) {
-              st.inDrift      = true;
-              st.shadowBuffer = [];
-              st.shadowCount  = 0;
-              const trigger = cp > st.oscUpper ? 'close '+fmtPrice(cp,st.tick) : 'candle high '+fmtPrice(pfLastHigh,st.tick);
-              dp(p+'.DR1', 'DRIFT START', trigger+' above band '+fmtPrice(st.oscUpper,st.tick)+' — shadow counting', 'warn');
-            }
-            dp(p+'.DR2', 'DRIFT STATUS', 'unr '+fmtPnl(st.unrPnl)+' · shadow '+st.shadowCount+'/'+CONFIRM_COUNT, 'warn');
-            const shadowResult = updateShadowBuffer(sym, cp);
-            if (shadowResult) {
-              // Shadow band confirmed — scratch at entry ($0.00) and migrate band up
-              dp(p+'.DR4', 'PATTERN SHIFT', 'scratch @ entry '+fmtPrice(sht.entry,st.tick)+' ($0.00) → new band '+fmtPrice(shadowResult.lower,st.tick)+' – '+fmtPrice(shadowResult.upper,st.tick), 'ok');
-              closeTrade(sym, sht, sht.entry, 'SCRATCH');
-              st.oscLower     = shadowResult.lower;
-              st.oscUpper     = shadowResult.upper;
-              st.inDrift      = false;
-              st.shadowBuffer = [];
-              st.shadowCount  = 0;
-              st.unrPnl       = 0;
-              if (!inBlackout()) openShort(sym, last);
-            }
-          } else if (st.inDrift && cp <= st.oscUpper && cp > st.oscLower) {
-            // Price recovered to entry level — scratch at entry ($0.00) and re-arm same band
-            dp(p+'.DR1', 'DRIFT RECOVERY', 'price back to '+fmtPrice(cp,st.tick)+' → scratch @ entry · re-arm same band', 'ok');
-            closeTrade(sym, sht, sht.entry, 'SCRATCH');
-            st.inDrift = false; st.shadowBuffer = []; st.shadowCount = 0; st.unrPnl = 0;
-            if (!inBlackout()) openShort(sym, last);
-          }
-        }
       }
     }
   }
