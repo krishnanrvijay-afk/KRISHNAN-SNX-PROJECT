@@ -348,8 +348,13 @@ const POLL_ARMED     =  5000;   // limit order pending — fast fill detection
 const POLL_FILLED    = 10000;   // position open — monitoring TP/SL
 const DEPTH_POLL     = 30000;
 const CANDLE_INT     = 'Min1';
-const CONFIRM_COUNT  = 3;      // consecutive same-tick closes needed to confirm band
 const MAX_HOLD_CANDLES = 8;    // force-exit after this many post-fill candles
+// ── ZONE-WINDOW DETECTION (replaces strict A-B-A-B-A-B step machine) ──────────
+const ZONE_TOLERANCE  = 0;    // extra ticks wide per zone (0 = strict; raise to 1 to catch 2-tick swings)
+const ZONE_WINDOW_N   = 8;    // rolling sample window — how many polls to track
+const ZONE_WINDOW_K   = 6;    // min in-zone samples out of N needed to confirm
+const ZONE_MIN_EACH   = 2;    // min samples required in EACH zone (L and H)
+const BAND_HOLD_HOURS = 4;    // hold a confirmed band this many hours if off-hours before expiry
 const BLACKOUT_H     = [9, 10];
 
 // ── DIAG LOG (per-symbol) ─────────────────────────────────────────────────────
@@ -421,12 +426,14 @@ SYMBOLS.forEach(s => {
   state[s] = {
     // candle history
     candles: [], tick: 0.0001,
-    // tick-pair oscillator state — A-B-A-B-A step machine
-    tpStep:       1,       // step: 1=need P1a, 2=need P1b, 3=c3=P1a?, 4=c4=P1b?, 5=c5=P1a?
-    tpPrice1a:    null,    // A price (candles 1,3,5)
-    tpPrice1b:    null,    // B price (candles 2,4)
-    tpCounter:    0,       // confirmation counter: 1 after P1b, 2 after c3, 3 after c5 (=confirmed)
-    tpLastStepTs:   0,     // Date.now() of last step advance (20s debounce)
+    // zone-window oscillator detection state (K-of-N sliding buffer)
+    zwAnchorLow:  null,   // lower band boundary (exact tick)
+    zwAnchorHigh: null,   // upper band boundary = zwAnchorLow + tick
+    zwBuffer:     [],     // rolling array of 'L'|'H' — last ZONE_WINDOW_N samples
+    zwLowCount:   0,      // count of 'L' entries in buffer
+    zwHighCount:  0,      // count of 'H' entries in buffer
+    zwLastTs:     0,      // debounce: reject samples < 15s apart
+    zwHeldTs:     null,   // set when band confirmed but held pending session
     // band state (set once tpCount >= CONFIRM_COUNT)
     inOsc: false,
     oscLower: 0,
@@ -449,7 +456,7 @@ SYMBOLS.forEach(s => {
     shadowPrice1: null,    // display field
     shadowPrice2: null,    // display field
     unrPnl:       0,       // live unrealized PNL ($) of open filled position
-    tpLastReset:  null,    // last reset msg e.g. "Got 0.9780 · needed 0.9770 at step 4"
+    zwLastReset:  null,    // last out-of-zone rejection message
   };
 });
 
@@ -613,17 +620,18 @@ function resetBand(sym, reason) {
   // cancel any unfilled pending orders silently
   if (st.openLong  && !st.openLong.fillConfirmed)  st.openLong  = null;
   if (st.openShort && !st.openShort.fillConfirmed) st.openShort = null;
-  // reset oscillator so tick-pair restarts
+  // reset oscillator so zone-window detection restarts from scratch
   st.inOsc           = false;
   st.oscLower        = 0;
   st.oscUpper        = 0;
-  st.tpStep          = 1;
-  st.tpPrice1a       = null;
-  st.tpPrice1b       = null;
-  st.tpCounter       = 0;
-  // clear lastCandleTs so the spike/SL candle is never seeded into
-  // the new pattern — detection always starts from the NEXT candle after reset.
-  st.tpLastStepTs    = 0;
+  st.zwAnchorLow     = null;
+  st.zwAnchorHigh    = null;
+  st.zwBuffer        = [];
+  st.zwLowCount      = 0;
+  st.zwHighCount     = 0;
+  st.zwLastTs        = 0;
+  st.zwHeldTs        = null;
+  st.zwLastReset     = null;
   st.cycleTradeCount = 0;
   st.activeDir       = 'LONG';
   st.action          = 'WAIT';
@@ -686,152 +694,179 @@ function updateShadowBuffer(sym, price) {
   return null;
 }
 
-// ── TICK-PAIR OSCILLATOR ───────────────────────────────────────────────────────
-// A-B-A-B-A-B pattern: 6 consecutive 1-minute candle closes must alternate
-// strictly between exactly two prices (Price1a and Price1b).
-//
-// Step machine:
-//   Step 1 — first candle  → Price1a
-//   Step 2 — second candle → Price1b (must differ from P1a); counter = 1
-//   Step 3 — third candle  must == Price1a  → counter = 2
-//   Step 4 — fourth candle must == Price1b
-//   Step 5 — fifth candle  must == Price1a  → counter = 3
-//   Step 6 — sixth candle  must == Price1b  → CONFIRMED
-//
-// Any mismatch at steps 3–6 restarts with the mismatching candle as new Price1a.
-// Band = [min(P1a,P1b), max(P1a,P1b)].
-function updateTickPair(sym, candle) {
-  const st = state[sym];
-  const p  = pollCount;
+// ── ZONE-WINDOW OSCILLATOR DETECTION ─────────────────────────────────────────
+// Replaces the strict A-B-A-B-A-B 6-step sequential machine with a K-of-N
+// sliding sample buffer.  A band is confirmed when:
+//   - Both zone anchors are set (1-tick apart, or up to ZONE_TOLERANCE extra ticks)
+//   - The rolling buffer of last ZONE_WINDOW_N samples contains >= ZONE_WINDOW_K
+//     in-zone reads, with >= ZONE_MIN_EACH in EACH zone (L and H)
+//   - Any out-of-zone price immediately resets detection
+// Debounce: one sample accepted per 15s (same as old step machine).
+// Sticky closes (same price twice) advance the buffer normally — they no longer
+// cause resets as long as the price remains within the declared zone.
+function updateZoneWindow(sym, candle) {
+  const st   = state[sym];
+  const p    = pollCount;
+  const tick = st.tick;
+  const now  = Date.now();
 
-  const now = Date.now();
-  if (now - st.tpLastStepTs < 15000) return null; // debounce: one step per ~20s poll
-  // NOTE: tpLastStepTs is updated only on actual step advances, NOT on re-anchors.
-  // Re-anchors at step 2 (same price as P1a) return early without consuming the slot.
+  if (now - st.zwLastTs < 15000) return null; // debounce
 
-  const price = roundTick(candle.close, st.tick);
-  dp(sym, p+'.TP1', 'TICK-PAIR CLOSE', fmtPrice(candle.close,st.tick)+' → tick '+fmtPrice(price,st.tick), 'info');
+  const price = roundTick(candle.close, tick);
+  dp(sym, p+'.ZW1', 'ZONE SAMPLE', fmtPrice(candle.close,tick)+' → '+fmtPrice(price,tick), 'info');
 
-  // ── Step 1: capture Price1a ──────────────────────────────────────────────────
-  if (st.tpStep === 1) {
-    st.tpLastStepTs = now;
-    st.tpPrice1a   = price;
-    st.tpPrice1b   = null;
-    st.tpCounter   = 0;
-    st.tpStep      = 2;
-    st.tpLastReset = null; // clear previous reset message on fresh start
-    dp(sym, p+'.TP2', 'OSC 1/6', 'P1a='+fmtPrice(price,st.tick)+' — waiting for P1b', 'muted');
+  // ── Phase 1: establish anchor low ───────────────────────────────────────────
+  if (st.zwAnchorLow === null) {
+    st.zwAnchorLow  = price;
+    st.zwAnchorHigh = null;
+    st.zwBuffer     = [];
+    st.zwLowCount   = 0;
+    st.zwHighCount  = 0;
+    st.zwLastTs     = now;
+    dp(sym, p+'.ZW2', 'ZW ANCHOR-L', fmtPrice(price,tick)+' — waiting for upper anchor', 'muted');
     return null;
   }
 
-  // ── Step 2: capture Price1b (must differ from P1a) ──────────────────────────
-  if (st.tpStep === 2) {
-    if (price === st.tpPrice1a) {
-      // Same price — re-anchor P1a, stay at step 2.
-      // Do NOT update tpLastStepTs: re-anchor is free, next poll tries P1b immediately.
-      st.tpPrice1a = price;
-      dp(sym, p+'.TP2', 'OSC 1/6', 'P1a='+fmtPrice(price,st.tick)+' (re-anchor) — waiting for P1b', 'muted');
+  // ── Phase 2: establish anchor high ──────────────────────────────────────────
+  if (st.zwAnchorHigh === null) {
+    const tickDiff = Math.round((price - st.zwAnchorLow) / tick);
+
+    if (tickDiff === 0) {
+      // Same price — re-anchor low (free, no debounce consumed)
+      st.zwAnchorLow = price;
+      dp(sym, p+'.ZW2', 'ZW ANCHOR-L', fmtPrice(price,tick)+' (re-anchor) — waiting for upper anchor', 'muted');
       return null;
     }
-    st.tpLastStepTs = now;
-    st.tpPrice1b = price;
-    st.tpCounter = 1;
-    st.tpStep    = 3;
-    dp(sym, p+'.TP2', 'OSC 2/6', 'P1a='+fmtPrice(st.tpPrice1a,st.tick)+' P1b='+fmtPrice(price,st.tick)+' counter=1 — need c3=P1a', 'warn');
-    return null;
-  }
 
-  // ── Step 3: third candle must == Price1a ─────────────────────────────────────
-  if (st.tpStep === 3) {
-    st.tpLastStepTs = now;
-    if (price === st.tpPrice1a) {
-      st.tpCounter = 2;
-      st.tpStep    = 4;
-      dp(sym, p+'.TP2', 'OSC 3/6', 'c3=P1a ✓ counter=2 — need c4=P1b', 'warn');
-    } else {
-      st.tpLastReset = 'Got '+fmtPrice(price,st.tick)+' · needed '+fmtPrice(st.tpPrice1a,st.tick)+' at step 3';
-      dp(sym, p+'.TP2', 'OSC RESET', 'c3 '+fmtPrice(price,st.tick)+' ≠ P1a '+fmtPrice(st.tpPrice1a,st.tick)+' → restart', 'muted');
-      st.tpPrice1a = null; st.tpPrice1b = null; st.tpCounter = 0; st.tpStep = 1;
-    }
-    return null;
-  }
-
-  // ── Step 4: fourth candle must == Price1b ────────────────────────────────────
-  if (st.tpStep === 4) {
-    st.tpLastStepTs = now;
-    if (price === st.tpPrice1b) {
-      st.tpStep = 5;
-      dp(sym, p+'.TP2', 'OSC 4/6', 'c4=P1b ✓ — need c5=P1a', 'warn');
-    } else {
-      st.tpLastReset = 'Got '+fmtPrice(price,st.tick)+' · needed '+fmtPrice(st.tpPrice1b,st.tick)+' at step 4';
-      dp(sym, p+'.TP2', 'OSC RESET', 'c4 '+fmtPrice(price,st.tick)+' ≠ P1b '+fmtPrice(st.tpPrice1b,st.tick)+' → restart', 'muted');
-      st.tpPrice1a = null; st.tpPrice1b = null; st.tpCounter = 0; st.tpStep = 1;
-    }
-    return null;
-  }
-
-  // ── Step 5: fifth candle must == Price1a ─────────────────────────────────────
-  if (st.tpStep === 5) {
-    st.tpLastStepTs = now;
-    if (price === st.tpPrice1a) {
-      st.tpCounter = 3;
-      st.tpStep    = 6;
-      dp(sym, p+'.TP2', 'OSC 5/6', 'c5=P1a ✓ counter=3 — need c6=P1b', 'warn');
-    } else {
-      st.tpLastReset = 'Got '+fmtPrice(price,st.tick)+' · needed '+fmtPrice(st.tpPrice1a,st.tick)+' at step 5';
-      dp(sym, p+'.TP2', 'OSC RESET', 'c5 '+fmtPrice(price,st.tick)+' ≠ P1a '+fmtPrice(st.tpPrice1a,st.tick)+' → restart', 'muted');
-      st.tpPrice1a = null; st.tpPrice1b = null; st.tpCounter = 0; st.tpStep = 1;
-    }
-    return null;
-  }
-
-  // ── Step 6: sixth candle must == Price1b → CONFIRMED ─────────────────────────
-  if (st.tpStep === 6) {
-    st.tpLastStepTs = now;
-    if (price === st.tpPrice1b) {
-      const lower = +(Math.min(st.tpPrice1a, st.tpPrice1b)).toFixed(7);
-      const upper = +(Math.max(st.tpPrice1a, st.tpPrice1b)).toFixed(7);
-      dp(sym, p+'.TP3', 'BAND CONFIRMED',
-        'A-B-A-B-A-B · P1a='+fmtPrice(st.tpPrice1a,st.tick)+' P1b='+fmtPrice(st.tpPrice1b,st.tick)+
-        ' · band '+fmtPrice(lower,st.tick)+' – '+fmtPrice(upper,st.tick)+' counter=3', 'ok');
-      return { confirmed: true, lower, upper };
-    } else {
-      st.tpLastReset = 'Got '+fmtPrice(price,st.tick)+' · needed '+fmtPrice(st.tpPrice1b,st.tick)+' at step 6';
-      dp(sym, p+'.TP2', 'OSC RESET', 'c6 '+fmtPrice(price,st.tick)+' ≠ P1b '+fmtPrice(st.tpPrice1b,st.tick)+' → restart', 'muted');
-      st.tpPrice1a = null; st.tpPrice1b = null; st.tpCounter = 0; st.tpStep = 1;
+    const absDiff = Math.abs(tickDiff);
+    if (absDiff > (1 + ZONE_TOLERANCE)) {
+      // Gap too wide — restart with this price as new low anchor
+      st.zwAnchorLow  = price;
+      st.zwAnchorHigh = null;
+      st.zwBuffer     = [];
+      st.zwLowCount   = 0;
+      st.zwHighCount  = 0;
+      st.zwLastReset  = 'Anchor gap '+absDiff+' ticks > '+(1+ZONE_TOLERANCE)+' max → restart';
+      st.zwLastTs     = now;
+      dp(sym, p+'.ZW2', 'ZW WIDE GAP', absDiff+' tick gap — restart', 'warn');
       return null;
     }
+
+    // Valid pair — normalise so zwAnchorLow < zwAnchorHigh
+    st.zwAnchorLow  = +(Math.min(st.zwAnchorLow, price)).toFixed(7);
+    st.zwAnchorHigh = +(st.zwAnchorLow + tick).toFixed(7);
+    // Seed the buffer with both anchor observations
+    const firstSlot  = tickDiff > 0 ? 'L' : 'H'; // first anchor was lower or higher
+    const secondSlot = tickDiff > 0 ? 'H' : 'L';
+    st.zwBuffer    = [firstSlot, secondSlot];
+    st.zwLowCount  = 1;
+    st.zwHighCount = 1;
+    st.zwLastTs    = now;
+    dp(sym, p+'.ZW2', 'ZW ANCHORS SET',
+      'L='+fmtPrice(st.zwAnchorLow,tick)+' H='+fmtPrice(st.zwAnchorHigh,tick)+
+      ' · buf=['+st.zwBuffer.join(',')+'] L='+st.zwLowCount+' H='+st.zwHighCount, 'warn');
+    return null;
+  }
+
+  // ── Phase 3: accumulate samples in rolling buffer ────────────────────────────
+  const loLo = st.zwAnchorLow;
+  const loHi = +(st.zwAnchorLow  + ZONE_TOLERANCE * tick).toFixed(7);
+  const hiLo = st.zwAnchorHigh;
+  const hiHi = +(st.zwAnchorHigh + ZONE_TOLERANCE * tick).toFixed(7);
+
+  const inLow  = price >= loLo && price <= loHi;
+  const inHigh = price >= hiLo && price <= hiHi;
+
+  if (!inLow && !inHigh) {
+    // Out-of-zone → immediate reset, seed new anchor with this price
+    st.zwLastReset  = 'Out-of-zone: '+fmtPrice(price,tick)+' (zone '+fmtPrice(loLo,tick)+'–'+fmtPrice(hiHi,tick)+') → reset';
+    dp(sym, p+'.ZW3', 'ZW OUT-OF-ZONE', st.zwLastReset, 'bad');
+    st.zwAnchorLow  = price;
+    st.zwAnchorHigh = null;
+    st.zwBuffer     = [];
+    st.zwLowCount   = 0;
+    st.zwHighCount  = 0;
+    st.zwLastTs     = now;
+    return null;
+  }
+
+  const slot = inLow ? 'L' : 'H';
+  st.zwBuffer.push(slot);
+  if (st.zwBuffer.length > ZONE_WINDOW_N) st.zwBuffer.shift();
+  st.zwLowCount  = st.zwBuffer.filter(s => s === 'L').length;
+  st.zwHighCount = st.zwBuffer.filter(s => s === 'H').length;
+  st.zwLastTs    = now;
+
+  const total    = st.zwBuffer.length;
+  const inZone   = st.zwLowCount + st.zwHighCount;
+  const progress = total >= ZONE_WINDOW_N ? inZone+'/'+ZONE_WINDOW_K : total+'/'+ZONE_WINDOW_N;
+  const status   = (total >= ZONE_WINDOW_N && inZone >= ZONE_WINDOW_K && st.zwLowCount >= ZONE_MIN_EACH && st.zwHighCount >= ZONE_MIN_EACH) ? 'ok' : 'warn';
+
+  dp(sym, p+'.ZW3', 'ZW BUFFER',
+    '['+st.zwBuffer.join('')+'] L='+st.zwLowCount+' H='+st.zwHighCount+' ('+progress+')', status);
+
+  // ── Confirmation check ───────────────────────────────────────────────────────
+  if (total >= ZONE_WINDOW_N &&
+      inZone >= ZONE_WINDOW_K &&
+      st.zwLowCount >= ZONE_MIN_EACH &&
+      st.zwHighCount >= ZONE_MIN_EACH) {
+    const lower = st.zwAnchorLow;
+    const upper = st.zwAnchorHigh;
+    dp(sym, p+'.ZW4', 'BAND CONFIRMED',
+      'K-of-N · L='+fmtPrice(lower,tick)+' H='+fmtPrice(upper,tick)+
+      ' · buf=['+st.zwBuffer.join('')+'] L='+st.zwLowCount+' H='+st.zwHighCount+' inZone='+inZone+'/'+ZONE_WINDOW_K, 'ok');
+    return { confirmed: true, lower, upper };
   }
 
   return null;
 }
 
 // ── RETROSPECTIVE BAND SCAN ───────────────────────────────────────────────────
-// On startup or after any reset (tpStep === 1), check whether the last 6 candles
-// already form A-B-A-B-A-B. If yes, confirm the band immediately — no waiting.
-// After an SL reset the breakdown candle is in history and will naturally fail
-// the pattern check, so no false re-entry is possible.
+// On startup / after reset, check whether the last ZONE_WINDOW_N candles already
+// satisfy the K-of-N zone-window criteria. If yes, confirm immediately.
+// Uses the same zone-window logic as updateZoneWindow so behaviour is consistent.
 function tryRetroConfirm(sym, raw, p) {
   const st   = state[sym];
   const tick = st.tick;
-  if (raw.length < 6) return null;
+  if (raw.length < ZONE_WINDOW_N) return null;
 
-  const last6  = raw.slice(-6);
-  const prices = last6.map(c => roundTick(c.close, tick));
-  const p1a = prices[0];
-  const p1b = prices[1];
-  if (p1a === p1b) return null;
+  const lastN  = raw.slice(-ZONE_WINDOW_N);
+  const prices = lastN.map(c => roundTick(c.close, tick));
 
-  for (let i = 0; i < 6; i++) {
-    if (prices[i] !== ((i % 2 === 0) ? p1a : p1b)) return null;
+  // Find the most common pair of adjacent prices
+  const distinct = [...new Set(prices)].sort((a,b) => a-b);
+  if (distinct.length < 2) return null; // all same price — flat market
+
+  // Try each adjacent pair in distinct list as candidate (aLow, aHigh)
+  for (let di = 0; di < distinct.length - 1; di++) {
+    const aLow  = distinct[di];
+    const aHigh = distinct[di + 1];
+    const tickDiff = Math.round((aHigh - aLow) / tick);
+    if (tickDiff < 1 || tickDiff > (1 + ZONE_TOLERANCE)) continue;
+
+    const loLo = aLow;
+    const loHi = +(aLow  + ZONE_TOLERANCE * tick).toFixed(7);
+    const hiLo = aHigh;
+    const hiHi = +(aHigh + ZONE_TOLERANCE * tick).toFixed(7);
+
+    let lowCount = 0, highCount = 0, outCount = 0;
+    prices.forEach(price => {
+      if (price >= loLo && price <= loHi) lowCount++;
+      else if (price >= hiLo && price <= hiHi) highCount++;
+      else outCount++;
+    });
+
+    const inZone = lowCount + highCount;
+    if (outCount === 0 && inZone >= ZONE_WINDOW_K && lowCount >= ZONE_MIN_EACH && highCount >= ZONE_MIN_EACH) {
+      const lower = aLow;
+      const upper = aHigh;
+      dp(sym, p+'.ZW4', 'BAND CONFIRMED',
+        'K-of-N retro · L='+fmtPrice(lower,tick)+' H='+fmtPrice(upper,tick)+
+        ' · L='+lowCount+' H='+highCount+' inZone='+inZone+'/'+ZONE_WINDOW_K, 'ok');
+      return { confirmed: true, lower, upper };
+    }
   }
-
-  const lower = +(Math.min(p1a, p1b)).toFixed(7);
-  const upper = +(Math.max(p1a, p1b)).toFixed(7);
-  dp(sym, p+'.TP3', 'BAND CONFIRMED',
-    'A-B-A-B-A-B in history · P1a='+fmtPrice(p1a,tick)+' P1b='+fmtPrice(p1b,tick)+
-    ' · band '+fmtPrice(lower,tick)+' – '+fmtPrice(upper,tick)+' (retro)', 'ok');
-  return { confirmed: true, lower, upper };
+  return null;
 }
 
 // ── PROCESS SYMBOL ────────────────────────────────────────────────────────────
@@ -866,28 +901,70 @@ async function processSym(sym) {
   if (isNewCandle) { st.lastCandleTs = last.ts; st.displayPrice = last.close; }
   dp(sym, p+'.8', 'CANDLE', isNewCandle ? 'NEW — processing tick-pair' : 'LIVE — 20s sample · detection + trade checks', isNewCandle ? 'ok' : 'muted');
 
-  // ── SECTION A: TICK-PAIR DETECTION (every 20s poll, band not yet confirmed) ──
-  // Runs on every poll — 15s debounce inside updateTickPair prevents double-stepping.
+  // ── SECTION A: ZONE-WINDOW DETECTION (every 20s poll, band not yet confirmed) ─
+  // Session-agnostic: detection runs 24/7.  Only hard BLACKOUT_H hours block arming.
+  // A confirmed band is held (zwHeldTs set) until BLACKOUT clears, then armed.
+  // Band expiry: if more than BAND_HOLD_HOURS pass with no arm, the band is released.
   if (!st.inOsc) {
-    const result = updateTickPair(sym, last);
-    dp(sym, p+'.9', 'OSC COUNTER', st.tpCounter+'/3 · step='+st.tpStep+'/6'+(st.tpPrice1a?' P1a='+fmtPrice(st.tpPrice1a,st.tick):'')+(st.tpPrice1b?' P1b='+fmtPrice(st.tpPrice1b,st.tick):''), st.tpCounter >= 3 ? 'ok' : 'muted');
+
+    // ── Band held from previous poll — check if now armable ─────────────────
+    if (st.zwHeldTs) {
+      const heldMs   = Date.now() - st.zwHeldTs;
+      const heldHrs  = heldMs / 3600000;
+      // Validate that the last close still falls within the held zone
+      const livePrice = roundTick(last.close, st.tick);
+      const stillInZone = livePrice === st.oscLower || livePrice === st.oscUpper;
+      if (!stillInZone) {
+        dp(sym, p+'.9', 'BAND EXPIRED', 'live close '+fmtPrice(livePrice,st.tick)+' outside held zone '+fmtPrice(st.oscLower,st.tick)+'–'+fmtPrice(st.oscUpper,st.tick)+' → reset', 'bad');
+        resetBand(sym, 'held band expired — price broke out of zone');
+        return;
+      }
+      if (heldHrs >= BAND_HOLD_HOURS) {
+        dp(sym, p+'.9', 'BAND EXPIRED', 'held '+heldHrs.toFixed(1)+'h >= '+BAND_HOLD_HOURS+'h max → reset', 'bad');
+        resetBand(sym, 'held band expired — max hold time exceeded');
+        return;
+      }
+      if (!inBlackout()) {
+        dp(sym, p+'.9', 'BAND ARMING', 'held band '+fmtPrice(st.oscLower,st.tick)+'–'+fmtPrice(st.oscUpper,st.tick)+' · blackout cleared → arm LONG', 'ok');
+        st.zwHeldTs = null;
+        st.inOsc    = true;
+        openLong(sym, last);
+        return;
+      }
+      dp(sym, p+'.9', 'BAND HELD', 'confirmed but blackout · held '+heldHrs.toFixed(1)+'h/'+BAND_HOLD_HOURS+'h · zone '+fmtPrice(st.oscLower,st.tick)+'–'+fmtPrice(st.oscUpper,st.tick), 'warn');
+      st.action = 'WAIT';
+      return;
+    }
+
+    // ── Normal detection via zone-window ─────────────────────────────────────
+    const result = updateZoneWindow(sym, last);
+    const buf    = st.zwBuffer;
+    const bStr   = buf.length ? '['+buf.join('')+'] L='+st.zwLowCount+' H='+st.zwHighCount+'/'+ZONE_WINDOW_K : 'empty';
+    dp(sym, p+'.9', 'ZW PROGRESS',
+      (st.zwAnchorLow ? 'L='+fmtPrice(st.zwAnchorLow,st.tick) : 'no anchor')+
+      (st.zwAnchorHigh ? ' H='+fmtPrice(st.zwAnchorHigh,st.tick) : '')+
+      ' · '+bStr, buf.length >= ZONE_WINDOW_K ? 'warn' : 'muted');
 
     if (result && result.confirmed) {
-      st.inOsc        = true;
-      st.oscLower     = result.lower;
-      st.oscUpper     = result.upper;
+      st.oscLower = result.lower;
+      st.oscUpper = result.upper;
       st.bandConfirmCount++;
-      st.action       = 'ARMED';
-      dp(sym, p+'.10', 'OSC CONFIRMED', 'band '+fmtPrice(st.oscLower,st.tick)+' – '+fmtPrice(st.oscUpper,st.tick)+' #'+st.bandConfirmCount, 'ok');
+      dp(sym, p+'.10', 'BAND CONFIRMED', 'zone '+fmtPrice(st.oscLower,st.tick)+' – '+fmtPrice(st.oscUpper,st.tick)+' #'+st.bandConfirmCount, 'ok');
 
       if (!inBlackout()) {
+        // Arm immediately — session-agnostic
+        st.inOsc    = true;
+        st.zwHeldTs = null;
+        st.action   = 'ARMED';
         openLong(sym, last);
       } else {
-        dp(sym, p+'.11', 'BLACKOUT', 'band confirmed but no trade during blackout', 'warn');
-        st.action = 'WAIT';
+        // Blackout — hold and arm when it clears
+        st.zwHeldTs = Date.now();
+        st.action   = 'WAIT';
+        dp(sym, p+'.11', 'BLACKOUT HOLD', 'band confirmed · arming blocked during blackout hours · holding up to '+BAND_HOLD_HOURS+'h', 'warn');
       }
     } else {
-      dp(sym, p+'.10', 'WAITING FOR BAND', 'A-B-A-B-A-B · step '+st.tpStep+'/6 · counter='+st.tpCounter+'/3', 'muted');
+      dp(sym, p+'.10', 'WAITING FOR BAND', 'K-of-N zone-window · N='+ZONE_WINDOW_N+' K='+ZONE_WINDOW_K+' · buf='+buf.length, 'muted');
       st.action = 'WAIT';
     }
     return;
@@ -1187,7 +1264,7 @@ function renderTicker(sym) {
   let borderCls = 'border-wait';
   if (act === 'SAME_TRADE' || act === 'SHORT_ARMED' || act === 'SHORT_FILLED') borderCls = 'border-short';
   else if (act === 'ARMED') borderCls = 'border-armed';
-  else if (act === 'WAIT' && st.tpCounter > 0) borderCls = 'border-new';
+  else if (act === 'WAIT' && st.zwBuffer && st.zwBuffer.length > 0) borderCls = 'border-new';
 
   card.className = 'ticker-card ' + borderCls;
 
@@ -1223,39 +1300,46 @@ function renderTicker(sym) {
     tickStripHtml = '<div class="bp-tick-strip">'+dots+
       '<span class="tick-count-label">BAND CONFIRMED '+fmtPrice(st.oscLower,st.tick)+' – '+fmtPrice(st.oscUpper,st.tick)+'</span></div>';
   } else {
-    // Detection in progress — 6-slot visual pattern tracker
-    const confirmedCount = Math.max(0, st.tpStep - 1);
-    const slotLabels  = ['A','B','A','B','A','B'];
-    const slotPrices  = [st.tpPrice1a, st.tpPrice1b, st.tpPrice1a, st.tpPrice1b, st.tpPrice1a, st.tpPrice1b];
-    const slotsHtml   = slotLabels.map((lbl, i) => {
-      if (i < confirmedCount) {
-        return '<div class="pt-slot confirmed">'+
-          '<div class="pt-label">'+lbl+'</div>'+
-          '<div class="pt-price">'+fmtPrice(slotPrices[i], st.tick)+'</div>'+
+    // Detection in progress — K-of-N zone window tracker
+    // Show ZONE_WINDOW_N slots: filled slots show L/H, empty slots are pending
+    const buf     = st.zwBuffer || [];
+    const slotsHtml = Array.from({length: ZONE_WINDOW_N}, (_, i) => {
+      if (i < buf.length) {
+        const val = buf[i];
+        const cls = val === 'L' ? 'confirmed' : 'filled'; // green for L, yellow for H
+        const col = val === 'L' ? '#00e676' : '#ffd740';
+        return '<div class="pt-slot confirmed" style="border-color:'+col+';background:'+col+'18">'+
+          '<div class="pt-label" style="color:'+col+'">'+val+'</div>'+
+          '<div class="pt-price">'+(val === 'L'
+            ? (st.zwAnchorLow  ? fmtPrice(st.zwAnchorLow,  st.tick) : '?')
+            : (st.zwAnchorHigh ? fmtPrice(st.zwAnchorHigh, st.tick) : '?'))+'</div>'+
           '<div class="pt-tick">✓</div></div>';
-      } else if (i === confirmedCount && st.tpStep >= 2) {
-        const np = slotPrices[i];
+      } else if (i === buf.length && st.zwAnchorLow !== null) {
         return '<div class="pt-slot active">'+
-          '<div class="pt-label">'+lbl+'</div>'+
-          '<div class="pt-price">'+(np ? fmtPrice(np, st.tick) : '?')+'</div>'+
+          '<div class="pt-label">?</div>'+
+          '<div class="pt-price">—</div>'+
           '<div class="pt-tick">→</div></div>';
       } else {
         return '<div class="pt-slot future">'+
-          '<div class="pt-label">'+lbl+'</div>'+
+          '<div class="pt-label">·</div>'+
           '<div class="pt-price">—</div>'+
           '<div class="pt-tick"> </div></div>';
       }
     }).join('');
-    const neededPrice = (st.tpStep >= 2) ? slotPrices[confirmedCount] : null;
-    const needsLine = neededPrice
-      ? '<div class="pt-needs">Next close must be <span class="pt-needs-price">'+fmtPrice(neededPrice, st.tick)+'</span></div>'
-      : '<div class="pt-needs" style="color:#444">Waiting for first candle...</div>';
-    const resetLine = st.tpLastReset
-      ? '<div class="pt-reset">↺ '+st.tpLastReset+'</div>'
+
+    const inZone   = (st.zwLowCount || 0) + (st.zwHighCount || 0);
+    const needLine = st.zwAnchorLow === null
+      ? '<div class="pt-needs" style="color:#444">Waiting for first close...</div>'
+      : st.zwAnchorHigh === null
+      ? '<div class="pt-needs">Anchor low=<span class="pt-needs-price">'+fmtPrice(st.zwAnchorLow,st.tick)+'</span> — waiting for upper anchor</div>'
+      : '<div class="pt-needs">Zone <span class="pt-needs-price">'+fmtPrice(st.zwAnchorLow,st.tick)+'</span>–<span class="pt-needs-price">'+fmtPrice(st.zwAnchorHigh,st.tick)+'</span> · L='+st.zwLowCount+' H='+st.zwHighCount+' · need '+ZONE_WINDOW_K+'/'+ZONE_WINDOW_N+'</div>';
+    const resetLine = st.zwLastReset
+      ? '<div class="pt-reset">↺ '+st.zwLastReset+'</div>'
       : '';
+
     tickStripHtml = '<div class="pattern-track">'+
       '<div class="pt-slots">'+slotsHtml+'</div>'+
-      needsLine + resetLine +
+      needLine + resetLine +
     '</div>';
   }
 
@@ -1601,14 +1685,17 @@ function clearAll() {
     st.trades          = [];
     st.openLong        = null;
     st.openShort       = null;
-    st.inOsc           = false;
-    st.tpPrice1a       = null;
-    st.tpPrice1b       = null;
-    st.tpCounter       = 0;
-    st.tpStep          = 1;
-    st.tpLastStepTs    = 0;
-    st.oscLower        = 0;
-    st.oscUpper        = 0;
+    st.inOsc            = false;
+    st.zwAnchorLow      = null;
+    st.zwAnchorHigh     = null;
+    st.zwBuffer         = [];
+    st.zwLowCount       = 0;
+    st.zwHighCount      = 0;
+    st.zwLastTs         = 0;
+    st.zwHeldTs         = null;
+    st.zwLastReset      = null;
+    st.oscLower         = 0;
+    st.oscUpper         = 0;
     st.bandConfirmCount = 0;
     st.cycleTradeCount  = 0;
     st.action           = 'WAIT';
@@ -1620,7 +1707,6 @@ function clearAll() {
     st.shadowPrice2     = null;
     st.displayPrice     = 0;
     st.unrPnl           = 0;
-    st.tpLastReset      = null;
     localStorage.removeItem('mps_v1_'+s);
   });
   allTrades = [];
