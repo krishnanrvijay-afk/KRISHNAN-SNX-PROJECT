@@ -332,16 +332,16 @@ const TOKEN_CONFIG = {
     margin: 1000, leverage: 50, notional: 50000, contractSize: 0.01,
     bestHours: [0,1,14,15], label: 'FIL', tick: 0.001
   },
-  NEARUSDT: {
-    margin: 1000, leverage: 50, notional: 50000, contractSize: 1,
-    bestHours: [0,1,2,13,14], label: 'NEAR', tick: 0.0001
+  SNXUSDT: {
+    margin: 100, leverage: 100, notional: 10000, contractSize: 0.1,
+    bestHours: [5,18,19], label: 'SNX', tick: 0.0001
   },
   CRVUSDT: {
     margin: 1000, leverage: 50, notional: 50000, contractSize: 1,
     bestHours: [13,14,15,16], label: 'CRV', tick: 0.0001
   },
 };
-const SYMBOLS        = ['FILUSDT', 'NEARUSDT', 'CRVUSDT'];
+const SYMBOLS        = ['FILUSDT', 'SNXUSDT', 'CRVUSDT'];
 const TAKER_FEE      = 0.0002;
 const MAKER_FEE      = 0;
 const POLL_DETECT    = 20000;   // detecting band — sample live price every 20s
