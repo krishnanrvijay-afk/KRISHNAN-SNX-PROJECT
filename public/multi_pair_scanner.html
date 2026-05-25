@@ -351,7 +351,8 @@ const DEPTH_POLL     = 30000;
 const CANDLE_INT     = 'Min1';
 const MAX_HOLD_CANDLES = 8;    // force-exit after this many post-fill candles
 // ── ZONE-WINDOW DETECTION (replaces strict A-B-A-B-A-B step machine) ──────────
-const ZONE_TOLERANCE  = 1;    // extra ticks wide per zone (1 = catch 2-tick swings, reduces resets dramatically)
+const ZONE_TOLERANCE  = 1;    // acceptance band width per zone in Phase 3 (ticks each side of each anchor)
+const ZONE_ANCHOR_GAP = 5;    // max ticks between the two anchors — independent of zone acceptance width
 const ZONE_WINDOW_N   = 4;    // 4 samples × 20s poll = ~80s minimum detection — matches manual read speed
 const ZONE_WINDOW_K   = 4;    // all 4 must be in-zone — no misses tolerated at this window size
 const ZONE_MIN_EACH   = 2;    // need at least 2L and 2H — minimum proof of two-sided oscillation
@@ -699,7 +700,7 @@ function updateShadowBuffer(sym, price) {
 // ── ZONE-WINDOW OSCILLATOR DETECTION ─────────────────────────────────────────
 // Replaces the strict A-B-A-B-A-B 6-step sequential machine with a K-of-N
 // sliding sample buffer.  A band is confirmed when:
-//   - Both zone anchors are set (1-tick apart, or up to ZONE_TOLERANCE extra ticks)
+//   - Both zone anchors are set (1–ZONE_ANCHOR_GAP ticks apart, independent of acceptance width)
 //   - The rolling buffer of last ZONE_WINDOW_N samples contains >= ZONE_WINDOW_K
 //     in-zone reads, with >= ZONE_MIN_EACH in EACH zone (L and H)
 //   - Any out-of-zone price immediately resets detection
@@ -741,14 +742,14 @@ function updateZoneWindow(sym, candle) {
     }
 
     const absDiff = Math.abs(tickDiff);
-    if (absDiff > (1 + ZONE_TOLERANCE)) {
+    if (absDiff > ZONE_ANCHOR_GAP) {
       // Gap too wide — restart with this price as new low anchor
       st.zwAnchorLow  = price;
       st.zwAnchorHigh = null;
       st.zwBuffer     = [];
       st.zwLowCount   = 0;
       st.zwHighCount  = 0;
-      st.zwLastReset  = 'Anchor gap '+absDiff+' ticks > '+(1+ZONE_TOLERANCE)+' max → restart';
+      st.zwLastReset  = 'Anchor gap '+absDiff+' ticks > '+ZONE_ANCHOR_GAP+' max → restart';
       st.zwLastTs     = now;
       dp(sym, p+'.ZW2', 'ZW WIDE GAP', absDiff+' tick gap — restart', 'warn');
       return null;
@@ -844,7 +845,7 @@ function tryRetroConfirm(sym, raw, p) {
     const aLow  = distinct[di];
     const aHigh = distinct[di + 1];
     const tickDiff = Math.round((aHigh - aLow) / tick);
-    if (tickDiff < 1 || tickDiff > (1 + ZONE_TOLERANCE)) continue;
+    if (tickDiff < 1 || tickDiff > ZONE_ANCHOR_GAP) continue;
 
     const loLo = aLow;
     const loHi = +(aLow  + ZONE_TOLERANCE * tick).toFixed(7);
