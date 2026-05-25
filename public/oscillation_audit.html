@@ -429,20 +429,23 @@ async function runAll() {
   const summData = [];
 
   try {
-    for (const sym of SYMBOLS) {
+    sb.textContent = 'Fetching FIL · NEAR · CRV in parallel...';
+
+    const results = await Promise.all(SYMBOLS.map(async sym => {
       const cfg = TOKEN_CONFIG[sym];
-      sb.textContent = 'Fetching ' + cfg.label + ' candles...';
       let candles = [];
       try {
         candles = await fetchCandles(sym, startTs);
       } catch(e) {
-        sb.textContent = cfg.label + ': fetch error — ' + e.message;
+        console.warn(cfg.label + ' fetch error:', e.message);
       }
-
-      sb.textContent = 'Analysing ' + cfg.label + ' (' + candles.length + ' candles)...';
       const { rows, stats } = runAudit(sym, candles);
-      allRows.push(...rows);
-      summData.push({ label: cfg.label, stats, candles: candles.length });
+      return { label: cfg.label, rows, stats, candles: candles.length };
+    }));
+
+    for (const r of results) {
+      allRows.push(...r.rows);
+      summData.push({ label: r.label, stats: r.stats, candles: r.candles });
     }
 
     // Sort rows by timestamp
