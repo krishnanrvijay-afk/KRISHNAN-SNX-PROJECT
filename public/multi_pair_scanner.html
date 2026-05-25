@@ -350,12 +350,13 @@ const DEPTH_POLL     = 30000;
 const CANDLE_INT     = 'Min1';
 const MAX_HOLD_CANDLES = 8;    // force-exit after this many post-fill candles
 // ── ZONE-WINDOW DETECTION (replaces strict A-B-A-B-A-B step machine) ──────────
-const ZONE_TOLERANCE  = 0;    // extra ticks wide per zone (0 = strict; raise to 1 to catch 2-tick swings)
+const ZONE_TOLERANCE  = 1;    // extra ticks wide per zone (1 = catch 2-tick swings, reduces resets dramatically)
 const ZONE_WINDOW_N   = 4;    // 4 samples × 20s poll = ~80s minimum detection — matches manual read speed
 const ZONE_WINDOW_K   = 4;    // all 4 must be in-zone — no misses tolerated at this window size
 const ZONE_MIN_EACH   = 2;    // need at least 2L and 2H — minimum proof of two-sided oscillation
 const BAND_HOLD_HOURS = 4;    // hold a confirmed band this many hours if off-hours before expiry
 const BLACKOUT_H     = [9, 10];
+const CONFIRM_COUNT   = 3;    // shadow buffer depth (drift detection)
 
 // ── DIAG LOG (per-symbol) ─────────────────────────────────────────────────────
 const DIAG_KEY_PREFIX = 'mps_diag_v1_';
@@ -579,7 +580,7 @@ function buildTrade(sym, direction, entry, target, sl, detectionPrice, candle) {
 
 function openLong(sym, candle) {
   const st = state[sym];
-  const t  = buildTrade(sym, 'LONG', st.oscLower, st.oscUpper, st.oscLower - st.tick, candle ? candle.close : st.lastPrice, candle);
+  const t  = buildTrade(sym, 'LONG', st.oscLower, st.oscUpper, st.oscLower - 2 * st.tick, candle ? candle.close : st.lastPrice, candle);
   st.openLong  = t;
   st.openShort = null;
   st.activeDir = 'LONG';
@@ -588,7 +589,7 @@ function openLong(sym, candle) {
 
 function openShort(sym, candle) {
   const st = state[sym];
-  const t  = buildTrade(sym, 'SHORT', st.oscUpper, st.oscLower, st.oscUpper + st.tick, candle ? candle.close : st.lastPrice, candle);
+  const t  = buildTrade(sym, 'SHORT', st.oscUpper, st.oscLower, st.oscUpper + 2 * st.tick, candle ? candle.close : st.lastPrice, candle);
   st.openShort = t;
   st.openLong  = null;
   st.activeDir = 'SHORT';
@@ -1021,68 +1022,49 @@ async function processSym(sym) {
         }
       }
 
-      // Long is filled — check TP/SL on post-fill candles
-      dp(sym, p+'.13', 'LONG IN TRADE', 'TP='+fmtPrice(lng.target,st.tick)+' SL='+fmtPrice(lng.sl,st.tick), 'ok');
+      // Long is filled — live-close monitoring every poll
+      dp(sym, p+'.13', 'LONG IN TRADE', 'TP>E=' + fmtPrice(lng.entry,st.tick) + ' · SL=' + fmtPrice(lng.sl,st.tick) + ' (E-2t)', 'ok');
 
       // Unrealized PNL — recalculate every poll while position is open
       st.unrPnl = +(TOKEN_CONFIG[sym].notional * (last.close - lng.entry) / lng.entry).toFixed(2);
-      dp(sym, p+'.13u', 'UNREALIZED PNL', fmtPnl(st.unrPnl)+' @ '+fmtPrice(last.close,st.tick), st.unrPnl >= 0 ? 'ok' : 'warn');
+      dp(sym, p+'.13u', 'UNREALIZED PNL', fmtPnl(st.unrPnl)+' @ '+fmtPrice(last.close,st.tick), st.unrPnl > 0 ? 'ok' : st.unrPnl < 0 ? 'warn' : 'muted');
 
-      const pfC = raw.filter(c => c.ts > lng.filledAtCandleTs);
-      if (!pfC.length) {
-        // Intra-fill-candle TP check: if current candle high already hit target, take profit now
-        if (last.close >= lng.target) {
-          st.unrPnl = 0;
-          dp(sym, p+'.14', 'LONG TP IMMEDIATE', fmtPrice(last.close,st.tick)+' >= '+fmtPrice(lng.target,st.tick)+' → WIN (fill candle)', 'ok');
-          closeTrade(sym, lng, lng.target, 'TP');
-          st.cycleTradeCount++;
-          dp(sym, p+'.14b', 'CYCLE TP COUNT', st.cycleTradeCount, 'ok');
-          st.activeDir = 'SHORT';
-          st.action    = 'SHORT_ARMED';
-          if (!inBlackout()) openShort(sym, last);
-          return;
-        }
-        if (last.close < st.oscLower) {
-          st.unrPnl = 0;
-          dp(sym, p+'.14', 'LONG SL IMMEDIATE', fmtPrice(last.close,st.tick)+' < band lower '+fmtPrice(st.oscLower,st.tick)+' → LOSS (fill candle)', 'bad');
-          closeTrade(sym, lng, last.close, 'SL');
-          resetBand(sym, 'long SL immediate — band broken');
-          return;
-        }
-        dp(sym, p+'.14', 'LONG WAITING', 'filled · next candle checks TP/SL', 'info');
-        st.action = 'SAME_TRADE';
-        return;
-      }
-      const pfHigh = Math.max(...pfC.map(c => c.high));
-      const pfLow  = Math.min(...pfC.map(c => c.low));
-      dp(sym, p+'.14', 'LONG POST-FILL', pfC.length+'c · hi='+fmtPrice(pfHigh,st.tick)+' lo='+fmtPrice(pfLow,st.tick), 'info');
+      // true only while still on the fill candle — guards against breakeven-SL firing at fill
+      const isFirstLongPoll = last.ts === lng.filledAtCandleTs;
 
-      if (pfHigh >= lng.target) {
-        // TP — flip to SHORT
+      // TP: first poll where live close is above entry (unrPnl > 0)
+      if (last.close > lng.entry) {
         st.unrPnl = 0;
-        dp(sym, p+'.15', 'LONG TP HIT', fmtPrice(pfHigh,st.tick)+' >= '+fmtPrice(lng.target,st.tick)+' → WIN', 'ok');
-        closeTrade(sym, lng, lng.target, 'TP');
+        dp(sym, p+'.14', 'LONG TP HIT', fmtPrice(last.close,st.tick)+' > E='+fmtPrice(lng.entry,st.tick)+' → WIN (unrPnl > 0)', 'ok');
+        closeTrade(sym, lng, last.close, 'TP');
         st.cycleTradeCount++;
-        dp(sym, p+'.15b', 'CYCLE TP COUNT', st.cycleTradeCount, 'ok');
+        dp(sym, p+'.14b', 'CYCLE TP COUNT', st.cycleTradeCount, 'ok');
         st.activeDir = 'SHORT';
         st.action    = 'SHORT_ARMED';
         if (!inBlackout()) openShort(sym, last);
-      } else if (pfC.some(c => roundTick(c.close, st.tick) < st.oscLower)) {
-        // Close below band lower — band broken
-        const slCandle = pfC.find(c => roundTick(c.close, st.tick) < st.oscLower);
-        const exitPx   = roundTick(slCandle.close, st.tick);
-        st.unrPnl = 0;
-        dp(sym, p+'.15', 'LONG SL HIT', 'close '+fmtPrice(exitPx,st.tick)+' < band lower '+fmtPrice(st.oscLower,st.tick)+' → LOSS · RESET', 'bad');
-        closeTrade(sym, lng, exitPx, 'SL');
-        resetBand(sym, 'long SL hit — band broken');
-      } else if (pfC.length >= MAX_HOLD_CANDLES) {
-        dp(sym, p+'.15', 'LONG TIMEOUT', pfC.length+'c max hold — exit @ '+fmtPrice(last.close,st.tick), 'bad');
-        closeTrade(sym, lng, last.close, 'TIMEOUT');
-        resetBand(sym, 'long timeout — band abandoned');
-      } else {
-        dp(sym, p+'.15', 'LONG HOLDING', pfC.length+'/'+MAX_HOLD_CANDLES+'c · hi='+fmtPrice(pfHigh,st.tick)+' lo='+fmtPrice(pfLow,st.tick), 'warn');
-        st.action = 'SAME_TRADE';
+        return;
       }
+
+      // Hard SL: price blew 2 ticks adverse
+      if (last.close <= lng.sl) {
+        st.unrPnl = 0;
+        dp(sym, p+'.14', 'LONG HARD SL', fmtPrice(last.close,st.tick)+' <= '+fmtPrice(lng.sl,st.tick)+' (E-2t) → LOSS', 'bad');
+        closeTrade(sym, lng, lng.sl, 'SL');
+        resetBand(sym, 'long hard SL — 2 ticks adverse');
+        return;
+      }
+
+      // Breakeven SL: price at or below entry (not in profit) — skip on the fill candle itself
+      if (!isFirstLongPoll && last.close <= lng.entry) {
+        st.unrPnl = 0;
+        dp(sym, p+'.14', 'LONG BREAKEVEN SL', fmtPrice(last.close,st.tick)+' <= E='+fmtPrice(lng.entry,st.tick)+' → BREAKEVEN exit', 'warn');
+        closeTrade(sym, lng, lng.entry, 'BREAKEVEN');
+        resetBand(sym, 'long breakeven SL — price returned to entry');
+        return;
+      }
+
+      dp(sym, p+'.14', 'LONG HOLDING', 'unrPnl='+fmtPnl(st.unrPnl)+' · awaiting close > '+fmtPrice(lng.entry,st.tick), isFirstLongPoll ? 'info' : 'warn');
+      st.action = 'SAME_TRADE';
     }
 
     // ── SHORT LEG ─────────────────────────────────────────────────────────────
@@ -1132,68 +1114,49 @@ async function processSym(sym) {
         }
       }
 
-      // Short is filled — check TP/SL
-      dp(sym, p+'.13', 'SHORT IN TRADE', 'TP='+fmtPrice(sht.target,st.tick)+' SL='+fmtPrice(sht.sl,st.tick), 'purple');
+      // Short is filled — live-close monitoring every poll
+      dp(sym, p+'.13', 'SHORT IN TRADE', 'TP<E=' + fmtPrice(sht.entry,st.tick) + ' · SL=' + fmtPrice(sht.sl,st.tick) + ' (E+2t)', 'purple');
 
       // Unrealized PNL — recalculate every poll while position is open
       st.unrPnl = +(TOKEN_CONFIG[sym].notional * (sht.entry - last.close) / sht.entry).toFixed(2);
-      dp(sym, p+'.13u', 'UNREALIZED PNL', fmtPnl(st.unrPnl)+' @ '+fmtPrice(last.close,st.tick), st.unrPnl >= 0 ? 'ok' : 'warn');
+      dp(sym, p+'.13u', 'UNREALIZED PNL', fmtPnl(st.unrPnl)+' @ '+fmtPrice(last.close,st.tick), st.unrPnl > 0 ? 'ok' : st.unrPnl < 0 ? 'warn' : 'muted');
 
-      const pfC = raw.filter(c => c.ts > sht.filledAtCandleTs);
-      if (!pfC.length) {
-        // Intra-fill-candle TP check: if current candle low already hit target, take profit now
-        if (last.close <= sht.target) {
-          st.unrPnl = 0;
-          dp(sym, p+'.14', 'SHORT TP IMMEDIATE', fmtPrice(last.close,st.tick)+' <= '+fmtPrice(sht.target,st.tick)+' → WIN (fill candle)', 'ok');
-          closeTrade(sym, sht, sht.target, 'TP');
-          st.cycleTradeCount++;
-          dp(sym, p+'.14b', 'CYCLE TP COUNT', st.cycleTradeCount, 'ok');
-          st.activeDir = 'LONG';
-          st.action    = 'ARMED';
-          if (!inBlackout()) openLong(sym, last);
-          return;
-        }
-        if (last.close > st.oscUpper) {
-          st.unrPnl = 0;
-          dp(sym, p+'.14', 'SHORT SL IMMEDIATE', fmtPrice(last.close,st.tick)+' > band upper '+fmtPrice(st.oscUpper,st.tick)+' → LOSS (fill candle)', 'bad');
-          closeTrade(sym, sht, last.close, 'SL');
-          resetBand(sym, 'short SL immediate — band broken');
-          return;
-        }
-        dp(sym, p+'.14', 'SHORT WAITING', 'filled · next candle checks TP/SL', 'info');
-        st.action = 'SHORT_FILLED';
-        return;
-      }
-      const pfLow  = Math.min(...pfC.map(c => c.low));
-      const pfHigh = Math.max(...pfC.map(c => c.high));
-      dp(sym, p+'.14', 'SHORT POST-FILL', pfC.length+'c · hi='+fmtPrice(pfHigh,st.tick)+' lo='+fmtPrice(pfLow,st.tick), 'info');
+      // true only while still on the fill candle — guards against breakeven-SL firing at fill
+      const isFirstShortPoll = last.ts === sht.filledAtCandleTs;
 
-      if (pfLow <= sht.target) {
-        // TP — flip to LONG
+      // TP: first poll where live close is below entry (unrPnl > 0)
+      if (last.close < sht.entry) {
         st.unrPnl = 0;
-        dp(sym, p+'.15', 'SHORT TP HIT', fmtPrice(pfLow,st.tick)+' <= '+fmtPrice(sht.target,st.tick)+' → WIN', 'ok');
-        closeTrade(sym, sht, sht.target, 'TP');
+        dp(sym, p+'.14', 'SHORT TP HIT', fmtPrice(last.close,st.tick)+' < E='+fmtPrice(sht.entry,st.tick)+' → WIN (unrPnl > 0)', 'ok');
+        closeTrade(sym, sht, last.close, 'TP');
         st.cycleTradeCount++;
-        dp(sym, p+'.15b', 'CYCLE TP COUNT', st.cycleTradeCount, 'ok');
+        dp(sym, p+'.14b', 'CYCLE TP COUNT', st.cycleTradeCount, 'ok');
         st.activeDir = 'LONG';
         st.action    = 'ARMED';
         if (!inBlackout()) openLong(sym, last);
-      } else if (pfC.some(c => roundTick(c.close, st.tick) > st.oscUpper)) {
-        // Close above band upper — band broken
-        const slCandle = pfC.find(c => roundTick(c.close, st.tick) > st.oscUpper);
-        const exitPx   = roundTick(slCandle.close, st.tick);
-        st.unrPnl = 0;
-        dp(sym, p+'.15', 'SHORT SL HIT', 'close '+fmtPrice(exitPx,st.tick)+' > band upper '+fmtPrice(st.oscUpper,st.tick)+' → LOSS · RESET', 'bad');
-        closeTrade(sym, sht, exitPx, 'SL');
-        resetBand(sym, 'short SL hit — band broken');
-      } else if (pfC.length >= MAX_HOLD_CANDLES) {
-        dp(sym, p+'.15', 'SHORT TIMEOUT', pfC.length+'c max hold — exit @ '+fmtPrice(last.close,st.tick), 'bad');
-        closeTrade(sym, sht, last.close, 'TIMEOUT');
-        resetBand(sym, 'short timeout — band abandoned');
-      } else {
-        dp(sym, p+'.15', 'SHORT HOLDING', pfC.length+'/'+MAX_HOLD_CANDLES+'c · hi='+fmtPrice(pfHigh,st.tick)+' lo='+fmtPrice(pfLow,st.tick), 'warn');
-        st.action = 'SHORT_FILLED';
+        return;
       }
+
+      // Hard SL: price blew 2 ticks adverse
+      if (last.close >= sht.sl) {
+        st.unrPnl = 0;
+        dp(sym, p+'.14', 'SHORT HARD SL', fmtPrice(last.close,st.tick)+' >= '+fmtPrice(sht.sl,st.tick)+' (E+2t) → LOSS', 'bad');
+        closeTrade(sym, sht, sht.sl, 'SL');
+        resetBand(sym, 'short hard SL — 2 ticks adverse');
+        return;
+      }
+
+      // Breakeven SL: price at or above entry (not in profit) — skip on the fill candle itself
+      if (!isFirstShortPoll && last.close >= sht.entry) {
+        st.unrPnl = 0;
+        dp(sym, p+'.14', 'SHORT BREAKEVEN SL', fmtPrice(last.close,st.tick)+' >= E='+fmtPrice(sht.entry,st.tick)+' → BREAKEVEN exit', 'warn');
+        closeTrade(sym, sht, sht.entry, 'BREAKEVEN');
+        resetBand(sym, 'short breakeven SL — price returned to entry');
+        return;
+      }
+
+      dp(sym, p+'.14', 'SHORT HOLDING', 'unrPnl='+fmtPnl(st.unrPnl)+' · awaiting close < '+fmtPrice(sht.entry,st.tick), isFirstShortPoll ? 'info' : 'warn');
+      st.action = 'SHORT_FILLED';
     }
   }
 }
