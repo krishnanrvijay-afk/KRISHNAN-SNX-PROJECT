@@ -32,6 +32,7 @@
   .status-bar.loading { color: var(--yellow); }
   .status-bar.done    { color: var(--green); }
   .status-bar.error   { color: var(--red); }
+  .run-stamp { display:none; padding: 7px 16px; background: rgba(0,200,255,0.07); border-bottom: 1px solid rgba(0,200,255,0.18); font-family:'Bebas Neue',sans-serif; font-size:13px; letter-spacing:1.5px; color:#00c8ff; }
 
   .summary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--border); margin-bottom: 1px; }
   .sum-card { background: var(--card); padding: 10px 14px; }
@@ -93,6 +94,7 @@
 </div>
 
 <div class="status-bar" id="statusBar">Press RUN AUDIT to fetch and analyse candles from 08:00 EDT to now.</div>
+<div class="run-stamp" id="runStamp"></div>
 
 <div class="summary-grid" id="summaryGrid" style="display:none"></div>
 
@@ -457,8 +459,16 @@ async function runAll() {
     const total = allRows.length;
     const bands = summData.reduce((s, r) => s + r.stats.bands, 0);
     const resets = summData.reduce((s, r) => s + r.stats.resets, 0);
+    const runAt = fmtTime(Date.now());
+    const runDate = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric', year: 'numeric'
+    }).format(new Date());
+    const stamp = document.getElementById('runStamp');
+    stamp.textContent = 'AUDIT RUN AT  ' + runAt + ' EDT  ·  ' + runDate + '  ·  Window: 08:00 EDT → ' + runAt;
+    stamp.style.display = 'block';
+
     sb.className = 'status-bar done';
-    sb.textContent = 'Done · ' + total + ' events · ' + bands + ' bands confirmed · ' + resets + ' resets · data from 08:00 EDT to ' + fmtTime(Date.now());
+    sb.textContent = 'Done · ' + total + ' events · ' + bands + ' bands confirmed · ' + resets + ' resets · data from 08:00 EDT to ' + runAt;
     document.getElementById('csvBtn').disabled = false;
 
   } catch (err) {
