@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Oscillation Audit</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600&family=Bebas+Neue&family=JetBrains+Mono:wght@400;600&display=swap');
+  :root {
+    --bg: #05080b; --surface: #0a0f14; --card: #0e1519; --border: #162028;
+    --green: #00e676; --yellow: #ffd740; --red: #ff3d3d; --blue: #00c8ff;
+    --purple: #b388ff; --muted: #4a6272; --text: #ddeeff; --white: #f0f8ff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+
+  .hdr { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--border); background: var(--surface); position: sticky; top: 0; z-index: 10; }
+  .hdr-title { font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 2px; color: var(--white); }
+  .hdr-title span { color: var(--green); }
+  .hdr-sub { font-size: 10px; color: var(--muted); margin-top: 2px; }
+  .hdr-right { display: flex; gap: 8px; align-items: center; }
+
+  .btn { font-family: 'Bebas Neue', sans-serif; font-size: 14px; letter-spacing: 1.5px; padding: 6px 14px; border-radius: 4px; border: none; cursor: pointer; }
+  .btn-green  { background: rgba(0,230,118,0.15); border: 1px solid rgba(0,230,118,0.4); color: var(--green); }
+  .btn-blue   { background: rgba(0,200,255,0.12); border: 1px solid rgba(0,200,255,0.35); color: var(--blue); }
+  .btn:disabled { opacity: 0.4; cursor: default; }
+
+  .controls { display: flex; gap: 12px; align-items: center; padding: 10px 16px; background: var(--card); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .ctl-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-right: 4px; }
+  .pill { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 4px 10px; font-size: 11px; color: var(--text); }
+  .status-bar { font-size: 11px; color: var(--muted); padding: 8px 16px; border-bottom: 1px solid var(--border); min-height: 30px; }
+  .status-bar.loading { color: var(--yellow); }
+  .status-bar.done    { color: var(--green); }
+  .status-bar.error   { color: var(--red); }
+
+  .summary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--border); margin-bottom: 1px; }
+  .sum-card { background: var(--card); padding: 10px 14px; }
+  .sum-pair { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 2px; color: var(--white); margin-bottom: 6px; }
+  .sum-row { display: flex; justify-content: space-between; margin-bottom: 2px; font-size: 11px; }
+  .sum-val.g { color: var(--green); } .sum-val.y { color: var(--yellow); } .sum-val.r { color: var(--red); } .sum-val.m { color: var(--muted); }
+
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  thead th { background: var(--surface); color: var(--muted); font-size: 9px; text-transform: uppercase; letter-spacing: 1.5px; padding: 7px 10px; text-align: left; border-bottom: 1px solid var(--border); position: sticky; top: 56px; white-space: nowrap; }
+  tbody tr { border-bottom: 1px solid rgba(22,32,40,0.7); }
+  tbody tr:hover { background: rgba(255,255,255,0.02); }
+  tbody td { padding: 6px 10px; vertical-align: middle; white-space: nowrap; }
+
+  .hr-sep td { background: var(--surface); color: var(--muted); font-size: 9px; letter-spacing: 2px; text-transform: uppercase; padding: 4px 10px; border-top: 1px solid var(--border); }
+
+  .pair-fil  { color: #00c8ff; font-family: 'Bebas Neue', sans-serif; font-size: 14px; letter-spacing: 1px; }
+  .pair-crv  { color: #b388ff; font-family: 'Bebas Neue', sans-serif; font-size: 14px; letter-spacing: 1px; }
+  .pair-near { color: #ffd740; font-family: 'Bebas Neue', sans-serif; font-size: 14px; letter-spacing: 1px; }
+
+  .cell-L  { color: var(--green); font-weight: 700; }
+  .cell-H  { color: var(--yellow); font-weight: 700; }
+  .cell-X  { color: var(--red); font-weight: 700; }
+  .cell-em { color: var(--muted); }
+
+  .badge { display: inline-block; font-family: 'Bebas Neue', sans-serif; font-size: 11px; letter-spacing: 1px; padding: 2px 8px; border-radius: 3px; }
+  .badge-band     { background: rgba(0,230,118,0.18); color: var(--green); border: 1px solid rgba(0,230,118,0.4); }
+  .badge-reset    { background: rgba(255,61,61,0.12);  color: var(--red);   border: 1px solid rgba(255,61,61,0.3); }
+  .badge-partial  { background: rgba(255,215,64,0.1);  color: var(--yellow);border: 1px solid rgba(255,215,64,0.3); }
+  .badge-blackout { background: rgba(74,98,114,0.2);   color: var(--muted); border: 1px solid rgba(74,98,114,0.3); }
+  .badge-gap      { background: rgba(179,136,255,0.1); color: var(--purple);border: 1px solid rgba(179,136,255,0.25); }
+
+  .note-cell { color: var(--muted); font-size: 10px; max-width: 200px; white-space: normal; line-height: 1.4; }
+  .price-sm  { font-size: 10px; color: var(--muted); display: block; }
+  .close-cell { text-align: center; min-width: 72px; }
+
+  #emptyMsg { color: var(--muted); padding: 30px; text-align: center; }
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <div>
+    <div class="hdr-title">OSCILLATION <span>AUDIT</span></div>
+    <div class="hdr-sub">08:00 EDT → current &nbsp;·&nbsp; N=4 K=4 ZONE_MIN_EACH=2 &nbsp;·&nbsp; 1-min candles</div>
+  </div>
+  <div class="hdr-right">
+    <button class="btn btn-green" id="runBtn" onclick="runAll()">RUN AUDIT</button>
+    <button class="btn btn-blue"  id="csvBtn" onclick="exportCsv()" disabled>EXPORT CSV</button>
+  </div>
+</div>
+
+<div class="controls">
+  <span class="ctl-label">Zone tolerance:</span><span class="pill" id="pilTol">0 ticks (strict)</span>
+  <span class="ctl-label">Window N:</span><span class="pill" id="pilN">4</span>
+  <span class="ctl-label">Min each side:</span><span class="pill" id="pilE">2</span>
+  <span class="ctl-label">Blackout:</span><span class="pill" id="pilBo">09:00–11:00 EDT</span>
+  <span class="ctl-label">Pairs:</span><span class="pill">FIL · CRV · NEAR</span>
+</div>
+
+<div class="status-bar" id="statusBar">Press RUN AUDIT to fetch and analyse candles from 08:00 EDT to now.</div>
+
+<div class="summary-grid" id="summaryGrid" style="display:none"></div>
+
+<div class="table-wrap">
+  <table id="auditTable" style="display:none">
+    <thead>
+      <tr>
+        <th>PAIR</th>
+        <th>HOUR</th>
+        <th>TIME</th>
+        <th>ANCHOR-L</th>
+        <th>ANCHOR-H</th>
+        <th class="close-cell">C-1</th>
+        <th class="close-cell">C-2</th>
+        <th class="close-cell">C-3</th>
+        <th class="close-cell">C-4</th>
+        <th>STATUS</th>
+        <th>NOTE</th>
+      </tr>
+    </thead>
+    <tbody id="auditBody"></tbody>
+  </table>
+  <div id="emptyMsg" style="display:none">No events recorded — candle data may be unavailable.</div>
+</div>
+
+<script>
+// ── CONFIG ─────────────────────────────────────────────────────────────────────
+const TOKEN_CONFIG = {
+  FILUSDT:  { label: 'FIL',  tick: 0.001,  cls: 'pair-fil'  },
+  NEARUSDT: { label: 'NEAR', tick: 0.0001, cls: 'pair-near' },
+  CRVUSDT:  { label: 'CRV',  tick: 0.0001, cls: 'pair-crv'  },
+};
+const SYMBOLS       = ['FILUSDT', 'NEARUSDT', 'CRVUSDT'];
+const ZONE_TOLERANCE = 0;
+const ZONE_WINDOW_N  = 4;
+const ZONE_MIN_EACH  = 2;
+const BLACKOUT_H     = [9, 10];
+
+let allRows = [];
+
+// ── TIME ───────────────────────────────────────────────────────────────────────
+function getStartTs() {
+  const now = new Date();
+  const edt = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', year: 'numeric', month: '2-digit',
+    day: '2-digit', hour12: false
+  }).formatToParts(now);
+  const get = t => +edt.find(p => p.type === t).value;
+  const y = get('year'), mo = get('month') - 1, d = get('day');
+  const edt8 = new Date(Date.UTC(y, mo, d, 12, 0, 0)); // 08:00 EDT = 12:00 UTC
+  return edt8.getTime();
+}
+
+function edtHour(ts) {
+  return parseInt(new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', hour: 'numeric', hour12: false
+  }).format(new Date(ts)), 10);
+}
+
+function fmtHour(ts) {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hour12: false
+  }).format(new Date(ts)).replace(/:\d\d$/, ':00');
+}
+
+function fmtTime(ts) {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+  }).format(new Date(ts));
+}
+
+function fmtPrice(v, tick) {
+  if (v === null || v === undefined) return '—';
+  const dec = tick < 0.0002 ? 5 : tick < 0.002 ? 4 : 3;
+  return parseFloat(v).toFixed(dec);
+}
+
+function roundTick(price, tick) {
+  return Math.round(price / tick) * tick;
+}
+
+// ── FETCH ──────────────────────────────────────────────────────────────────────
+async function fetchCandles(sym, startTs) {
+  const minsNeeded = Math.ceil((Date.now() - startTs) / 60000) + 5;
+  const limit      = Math.min(1000, Math.max(60, minsNeeded));
+  const r = await fetch('/proxy/mexc/kline?symbol=' + sym + '&interval=Min1&limit=' + limit);
+  const d = await r.json();
+  if (!d || !d.success || !d.data || !d.data.time) return [];
+  const raw = d.data;
+  return raw.time
+    .map((t, i) => ({ ts: t * 1000, close: parseFloat(raw.close[i]) }))
+    .sort((a, b) => a.ts - b.ts)
+    .filter(c => c.ts >= startTs);
+}
+
+// ── RETROSPECTIVE ZONE-WINDOW ANALYSIS ────────────────────────────────────────
+// Processes candles one at a time (1 per minute from history).
+// Emits event rows: BAND, RESET, PARTIAL, BLACKOUT, GAP.
+function runAudit(sym, candles) {
+  const cfg  = TOKEN_CONFIG[sym];
+  const tick = cfg.tick;
+  const rows = [];
+
+  let anchorLow  = null;
+  let anchorHigh = null;
+  let buffer     = [];   // [{price, label, ts}]
+  let windowBase = null; // ts of first close in current window attempt
+
+  // Track for BLACKOUT row dedup
+  let lastBlackoutHour = -1;
+  let stats = { bands: 0, resets: 0, partials: 0 };
+
+  for (let ci = 0; ci < candles.length; ci++) {
+    const c     = candles[ci];
+    const price = roundTick(c.close, tick);
+    const hour  = edtHour(c.ts);
+
+    // ── Blackout ─────────────────────────────────────────────────────────────
+    if (BLACKOUT_H.includes(hour)) {
+      if (hour !== lastBlackoutHour) {
+        lastBlackoutHour = hour;
+        // Flush any partial window before blackout
+        if (buffer.length > 0) {
+          rows.push(makeRow(cfg, buffer[0].ts, anchorLow, anchorHigh, tick, buffer, 'PARTIAL', 'Interrupted by blackout'));
+          stats.partials++;
+        }
+        rows.push({
+          pair: cfg.label, pairCls: cfg.cls, hour: fmtHour(c.ts), time: fmtTime(c.ts), ts: c.ts,
+          anchorL: null, anchorH: null, tick,
+          closes: [],
+          status: 'BLACKOUT', note: 'No trading ' + hour + ':00–' + (hour + 1) + ':00 EDT'
+        });
+      }
+      anchorLow = null; anchorHigh = null; buffer = []; windowBase = null;
+      continue;
+    }
+    lastBlackoutHour = -1;
+
+    // ── Phase 1: anchor low ──────────────────────────────────────────────────
+    if (anchorLow === null) {
+      anchorLow  = price;
+      anchorHigh = null;
+      buffer     = [];
+      windowBase = c.ts;
+      continue;
+    }
+
+    // ── Phase 2: anchor high ─────────────────────────────────────────────────
+    if (anchorHigh === null) {
+      const diff = Math.round((price - anchorLow) / tick);
+      if (diff === 0) {
+        anchorLow  = price;
+        windowBase = c.ts;
+        continue;
+      }
+      const absDiff = Math.abs(diff);
+      if (absDiff > (1 + ZONE_TOLERANCE)) {
+        // Gap too wide — restart without emitting a row (just price drift)
+        anchorLow  = price;
+        anchorHigh = null;
+        buffer     = [];
+        windowBase = c.ts;
+        continue;
+      }
+      // Anchors established
+      anchorLow  = parseFloat(Math.min(anchorLow, price).toFixed(7));
+      anchorHigh = parseFloat((anchorLow + tick).toFixed(7));
+      const lbl1 = diff > 0 ? 'L' : 'H';
+      const lbl2 = diff > 0 ? 'H' : 'L';
+      buffer = [
+        { price: diff > 0 ? anchorLow : anchorHigh, label: lbl1, ts: windowBase || c.ts },
+        { price: diff > 0 ? anchorHigh : anchorLow, label: lbl2, ts: c.ts }
+      ];
+      continue;
+    }
+
+    // ── Phase 3: classify and accumulate ─────────────────────────────────────
+    const loLo = anchorLow;
+    const loHi = parseFloat((anchorLow  + ZONE_TOLERANCE * tick).toFixed(7));
+    const hiLo = anchorHigh;
+    const hiHi = parseFloat((anchorHigh + ZONE_TOLERANCE * tick).toFixed(7));
+
+    const inLow  = price >= loLo && price <= loHi;
+    const inHigh = price >= hiLo && price <= hiHi;
+
+    if (!inLow && !inHigh) {
+      // Out-of-zone → RESET
+      const breakCloses = [...buffer, { price, label: '✗', ts: c.ts }];
+      rows.push(makeRow(cfg, buffer[0]?.ts || c.ts, anchorLow, anchorHigh, tick, breakCloses, 'RESET',
+        fmtPrice(price, tick) + ' outside zone → restart'));
+      stats.resets++;
+      // Restart with this out-of-zone price as new anchor
+      anchorLow  = price;
+      anchorHigh = null;
+      buffer     = [];
+      windowBase = c.ts;
+      continue;
+    }
+
+    buffer.push({ price, label: inLow ? 'L' : 'H', ts: c.ts });
+
+    // ── Window complete — check confirmation ──────────────────────────────────
+    if (buffer.length >= ZONE_WINDOW_N) {
+      const win     = buffer.slice(-ZONE_WINDOW_N);
+      const lCount  = win.filter(x => x.label === 'L').length;
+      const hCount  = win.filter(x => x.label === 'H').length;
+      const confirm = lCount >= ZONE_MIN_EACH && hCount >= ZONE_MIN_EACH;
+
+      if (confirm) {
+        rows.push(makeRow(cfg, win[0].ts, anchorLow, anchorHigh, tick, win, 'BAND',
+          lCount + 'L + ' + hCount + 'H — confirmed'));
+        stats.bands++;
+        // Full reset after band confirmed
+        anchorLow  = null;
+        anchorHigh = null;
+        buffer     = [];
+        windowBase = null;
+      } else {
+        rows.push(makeRow(cfg, win[0].ts, anchorLow, anchorHigh, tick, win, 'PARTIAL',
+          lCount + 'L + ' + hCount + 'H — need ' + ZONE_MIN_EACH + ' each'));
+        stats.partials++;
+        // Slide: drop oldest, keep last 3 and continue
+        buffer = buffer.slice(1);
+      }
+    }
+  }
+
+  // ── End-of-data partial flush ─────────────────────────────────────────────
+  if (buffer.length > 0 && anchorLow !== null) {
+    const lCount = buffer.filter(x => x.label === 'L').length;
+    const hCount = buffer.filter(x => x.label === 'H').length;
+    rows.push(makeRow(cfg, buffer[0].ts, anchorLow, anchorHigh, tick, buffer, 'PARTIAL',
+      lCount + 'L + ' + hCount + 'H — end of data (incomplete)'));
+    stats.partials++;
+  }
+
+  return { rows, stats };
+}
+
+function makeRow(cfg, ts, aL, aH, tick, closes, status, note) {
+  return {
+    pair: cfg.label, pairCls: cfg.cls, hour: fmtHour(ts), time: fmtTime(ts), ts,
+    anchorL: aL, anchorH: aH, tick,
+    closes: closes.slice(0, 5), // max 5 (4 + possible break)
+    status, note
+  };
+}
+
+// ── RENDER ─────────────────────────────────────────────────────────────────────
+function renderClose(cl, tick) {
+  if (!cl) return '<td class="close-cell cell-em">—</td>';
+  const lbl   = cl.label;
+  const price = fmtPrice(cl.price, tick);
+  if (lbl === '✗') return '<td class="close-cell cell-X">✗ ' + price + '</td>';
+  if (lbl === 'L') return '<td class="close-cell cell-L">L<span class="price-sm">' + price + '</span></td>';
+  if (lbl === 'H') return '<td class="close-cell cell-H">H<span class="price-sm">' + price + '</span></td>';
+  return '<td class="close-cell cell-em">' + price + '</td>';
+}
+
+function renderTable(allRows) {
+  const body = document.getElementById('auditBody');
+  if (!allRows.length) {
+    document.getElementById('emptyMsg').style.display = 'block';
+    document.getElementById('auditTable').style.display = 'none';
+    return;
+  }
+
+  document.getElementById('auditTable').style.display = 'table';
+  document.getElementById('emptyMsg').style.display   = 'none';
+
+  let html          = '';
+  let lastHourKey   = '';
+
+  for (const row of allRows) {
+    const hourKey = row.pair + '|' + row.hour;
+    if (hourKey !== lastHourKey) {
+      html += '<tr class="hr-sep"><td colspan="11">' + row.pair + '  ·  ' + row.hour + '  EDT</td></tr>';
+      lastHourKey = hourKey;
+    }
+
+    const badgeCls = {
+      BAND: 'badge-band', RESET: 'badge-reset',
+      PARTIAL: 'badge-partial', BLACKOUT: 'badge-blackout', GAP: 'badge-gap'
+    }[row.status] || 'badge-partial';
+
+    const closes = row.closes || [];
+    const c = [0,1,2,3].map(i => renderClose(closes[i], row.tick)).join('');
+
+    html += '<tr>' +
+      '<td><span class="' + row.pairCls + '">' + row.pair + '</span></td>' +
+      '<td style="color:var(--muted)">' + row.hour + '</td>' +
+      '<td>' + row.time + '</td>' +
+      '<td>' + (row.anchorL !== null ? '<span style="color:var(--green)">' + fmtPrice(row.anchorL, row.tick) + '</span>' : '<span class="cell-em">—</span>') + '</td>' +
+      '<td>' + (row.anchorH !== null ? '<span style="color:var(--yellow)">' + fmtPrice(row.anchorH, row.tick) + '</span>' : '<span class="cell-em">—</span>') + '</td>' +
+      c +
+      '<td>' + (row.status === 'BLACKOUT' ? '' : '<td></td>') + '<span class="badge ' + badgeCls + '">' + row.status + '</span></td>' +
+      '<td class="note-cell">' + (row.note || '') + '</td>' +
+    '</tr>';
+  }
+  body.innerHTML = html;
+}
+
+function renderSummary(results) {
+  const grid = document.getElementById('summaryGrid');
+  grid.style.display = 'grid';
+  grid.innerHTML = results.map(r => {
+    const { label, stats, candles } = r;
+    const pairCls = TOKEN_CONFIG[Object.keys(TOKEN_CONFIG).find(k => TOKEN_CONFIG[k].label === label)]?.cls || '';
+    return '<div class="sum-card">' +
+      '<div class="sum-pair ' + pairCls + '">' + label + '</div>' +
+      '<div class="sum-row"><span>Candles fetched</span><span class="sum-val m">' + candles + '</span></div>' +
+      '<div class="sum-row"><span>Bands confirmed</span><span class="sum-val g">' + stats.bands + '</span></div>' +
+      '<div class="sum-row"><span>Resets (out-of-zone)</span><span class="sum-val r">' + stats.resets + '</span></div>' +
+      '<div class="sum-row"><span>Partials (not enough L or H)</span><span class="sum-val y">' + stats.partials + '</span></div>' +
+    '</div>';
+  }).join('');
+}
+
+// ── MAIN ───────────────────────────────────────────────────────────────────────
+async function runAll() {
+  const btn = document.getElementById('runBtn');
+  btn.disabled = true;
+  btn.textContent = 'LOADING...';
+  document.getElementById('csvBtn').disabled = true;
+  document.getElementById('summaryGrid').style.display = 'none';
+  document.getElementById('auditTable').style.display  = 'none';
+  document.getElementById('emptyMsg').style.display    = 'none';
+  const sb = document.getElementById('statusBar');
+  sb.className = 'status-bar loading';
+  sb.textContent = 'Fetching candles from 08:00 EDT...';
+
+  const startTs  = getStartTs();
+  allRows        = [];
+  const summData = [];
+
+  try {
+    for (const sym of SYMBOLS) {
+      const cfg = TOKEN_CONFIG[sym];
+      sb.textContent = 'Fetching ' + cfg.label + ' candles...';
+      let candles = [];
+      try {
+        candles = await fetchCandles(sym, startTs);
+      } catch(e) {
+        sb.textContent = cfg.label + ': fetch error — ' + e.message;
+      }
+
+      sb.textContent = 'Analysing ' + cfg.label + ' (' + candles.length + ' candles)...';
+      const { rows, stats } = runAudit(sym, candles);
+      allRows.push(...rows);
+      summData.push({ label: cfg.label, stats, candles: candles.length });
+    }
+
+    // Sort rows by timestamp
+    allRows.sort((a, b) => a.ts - b.ts || SYMBOLS.indexOf(a.pair) - SYMBOLS.indexOf(b.pair));
+
+    renderSummary(summData);
+    renderTable(allRows);
+
+    const total = allRows.length;
+    const bands = summData.reduce((s, r) => s + r.stats.bands, 0);
+    const resets = summData.reduce((s, r) => s + r.stats.resets, 0);
+    sb.className = 'status-bar done';
+    sb.textContent = 'Done · ' + total + ' events · ' + bands + ' bands confirmed · ' + resets + ' resets · data from 08:00 EDT to ' + fmtTime(Date.now());
+    document.getElementById('csvBtn').disabled = false;
+
+  } catch (err) {
+    sb.className = 'status-bar error';
+    sb.textContent = 'Error: ' + err.message;
+  }
+
+  btn.disabled  = false;
+  btn.textContent = 'REFRESH';
+}
+
+// ── CSV EXPORT ─────────────────────────────────────────────────────────────────
+function exportCsv() {
+  const headers = ['Pair','Hour','Time','Timestamp','Anchor-L','Anchor-H','C1-Label','C1-Price','C2-Label','C2-Price','C3-Label','C3-Price','C4-Label','C4-Price','Status','Note'];
+  const rows = allRows.map(r => {
+    const cs = [0,1,2,3].map(i => r.closes[i] ? [r.closes[i].label, fmtPrice(r.closes[i].price, r.tick)] : ['','']);
+    return [
+      r.pair, r.hour, r.time, r.ts,
+      r.anchorL !== null ? fmtPrice(r.anchorL, r.tick) : '',
+      r.anchorH !== null ? fmtPrice(r.anchorH, r.tick) : '',
+      ...cs[0], ...cs[1], ...cs[2], ...cs[3],
+      r.status, '"' + (r.note || '').replace(/"/g, "'") + '"'
+    ].join(',');
+  });
+
+  const now    = new Date();
+  const stamp  = now.toISOString().replace(/[:.]/g,'-').slice(0,16);
+  const csv    = [headers.join(','), ...rows].join('\n');
+  const blob   = new Blob([csv], { type: 'text/csv' });
+  const url    = URL.createObjectURL(blob);
+  const a      = document.createElement('a');
+  a.href       = url;
+  a.download   = 'oscillation_audit_' + stamp + '.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+</script>
+</body>
+</html>
