@@ -292,7 +292,7 @@
   <div id="tickerCards"></div>
   <div id="diagCards"></div>
 
-  <div class="footer">FIL $50K · XRP $100K · AVAX $75K · 50x · MEXC data · paper mode · ZONE-WINDOW BUILD</div>
+  <div class="footer">FIL $50K · XRP $100K · AVAX $75K · AAVE $50K · 50x · MEXC data · paper mode · ZONE-WINDOW BUILD</div>
 </div>
 
 <!-- TRADE LOG TAB -->
@@ -340,8 +340,12 @@ const TOKEN_CONFIG = {
     margin: 1500, leverage: 50, notional: 75000, contractSize: 1,
     bestHours: [13,14,15,16], label: 'AVAX', tick: 0.001
   },
+  AAVEUSDT: {
+    margin: 1000, leverage: 50, notional: 50000, contractSize: 1,
+    bestHours: [14,15,16,17,18,19], label: 'AAVE', tick: 0.01
+  },
 };
-const SYMBOLS        = ['FILUSDT', 'XRPUSDT', 'AVAXUSDT'];
+const SYMBOLS        = ['FILUSDT', 'XRPUSDT', 'AVAXUSDT', 'AAVEUSDT'];
 const TAKER_FEE      = 0.0002;
 const MAKER_FEE      = 0;
 const POLL_DETECT    = 20000;   // detecting band — sample live price every 20s
