@@ -210,6 +210,9 @@
   .muted  { color: var(--muted) !important; }
 
   .footer { color: var(--muted); font-size: 9px; text-align: center; padding: 10px; border-top: 1px solid var(--border); }
+  .sim-banner { border-radius:6px; padding:8px 14px; margin-bottom:10px; font-family:'Bebas Neue',sans-serif; font-size:13px; letter-spacing:1px; display:flex; justify-content:space-between; align-items:center; }
+  .sim-banner.running  { background:rgba(0,200,255,0.07); border:1px solid rgba(0,200,255,0.25); color:#00c8ff; }
+  .sim-banner.complete { background:rgba(0,230,118,0.07); border:1px solid rgba(0,230,118,0.3);  color:var(--green); }
   #detailView { display: none; padding: 10px; }
 
   /* ── DIAG PILL STRIP ── */
@@ -280,6 +283,7 @@
 
   <div class="session-bar" id="sessionBar"></div>
   <div class="blackout" id="blackoutBanner">⛔ NY OPEN BLACKOUT 09:00–11:00 EDT — NO NEW TRADES</div>
+  <div class="sim-banner" id="simBanner" style="display:none"></div>
 
   <div class="combined">
     <div class="cpill"><div class="cpill-label">Total P&L</div><div class="cpill-value" id="totalPnl">+$0</div></div>
@@ -348,6 +352,8 @@ const TOKEN_CONFIG = {
 const SYMBOLS        = ['FILUSDT', 'XRPUSDT', 'AVAXUSDT', 'AAVEUSDT'];
 const TAKER_FEE      = 0.0002;
 const MAKER_FEE      = 0;
+const EARLY_EXIT_PCT = 0.25;   // exit when unrPnl hits 25% of 2-tick SL → fires on first adverse tick
+const SESSION_END_H  = 9;      // auto-stop at 09:00 EDT (blackout boundary)
 const POLL_DETECT    = 20000;   // detecting band — sample live price every 20s
 const POLL_ARMED     =  5000;   // limit order pending — fast fill detection
 const POLL_FILLED    = 10000;   // position open — monitoring TP/SL
@@ -367,7 +373,10 @@ const CONFIRM_COUNT   = 3;    // shadow buffer depth (drift detection)
 const DIAG_KEY_PREFIX = 'mps_diag_v1_';
 const diagLogs = {};
 SYMBOLS.forEach(s => { diagLogs[s] = []; });
-let diagEnabled = true;
+let diagEnabled    = true;
+let sessionStartTs = null;   // set when CLEAR is pressed to start a timed session
+let sessionRunning = false;  // true while session is active
+let pollerStopped  = false;  // set true on auto-stop
 
 // Clear all stored state on every startup — fresh session each time
 SYMBOLS.forEach(sym => {
@@ -481,7 +490,50 @@ function nyTzName() {
 function fmtTime(ms) {
   return new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(ms));
 }
+function edtMinute() {
+  return parseInt(new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',minute:'numeric'}).format(new Date()),10);
+}
 function inBlackout() { return BLACKOUT_H.includes(edtHour()); }
+
+function updateSimBanner() {
+  const el = document.getElementById('simBanner');
+  if (!el) return;
+  if (pollerStopped) {
+    el.style.display = 'flex';
+    el.className = 'sim-banner complete';
+    el.innerHTML = '<span>SESSION COMPLETE · auto-stopped at 09:00 EDT · Trade Log ready</span><span>CSV auto-exported</span>';
+    return;
+  }
+  if (!sessionRunning || !sessionStartTs) { el.style.display = 'none'; return; }
+  const elapsedMs  = Date.now() - sessionStartTs;
+  const h  = Math.floor(elapsedMs / 3600000);
+  const m  = Math.floor((elapsedMs % 3600000) / 60000);
+  const hh = String(h).padStart(2,'0');
+  const mm = String(m).padStart(2,'0');
+  const startStr = new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(sessionStartTs));
+  el.style.display = 'flex';
+  el.className = 'sim-banner running';
+  el.innerHTML = '<span>SESSION RUNNING · started '+startStr+' EDT · logging off</span><span>elapsed '+hh+'h '+mm+'m · stops 09:00 EDT</span>';
+}
+
+function autoExportAll() {
+  SYMBOLS.forEach((sym, i) => {
+    setTimeout(() => exportDiagCSV(sym), i * 400);
+  });
+  setTimeout(() => {
+    const trades = allTrades;
+    if (!trades.length) return;
+    const hdr  = 'Sym,Direction,Entry,Exit,Reason,Gross,Fees,Net,Outcome,HoldMin,TimeOpen,TimeClose\n';
+    const rows  = trades.map(t =>
+      [t.sym,t.direction,t.entry,t.exit,t.exitReason,t.gross,t.fees,t.net,t.outcome,t.holdMinutes,t.timeOpen,t.timeClose].join(',')
+    ).join('\n');
+    const blob  = new Blob([hdr+rows],{type:'text/csv'});
+    const url   = URL.createObjectURL(blob);
+    const a     = document.createElement('a');
+    a.href = url; a.download = 'session_trades_'+new Date().toISOString().slice(0,16).replace(/[T:]/g,'-')+'.csv';
+    a.click(); URL.revokeObjectURL(url);
+  }, SYMBOLS.length * 400 + 200);
+}
 function sessionName(h) {
   if (h < 3) return 'Asia'; if (h < 9) return 'London';
   if (h < 11) return 'NY Open'; if (h < 21) return 'NY Session';
@@ -553,7 +605,7 @@ function calcPnl(sym, entry, exit, direction, reason) {
   const gross = direction === 'SHORT'
     ? cfg.notional * (entry - exit) / entry
     : cfg.notional * (exit - entry) / entry;
-  const fees  = (reason === 'TP' ? MAKER_FEE : TAKER_FEE) * cfg.notional;
+  const fees  = (['TP','EARLY_LIMIT','BREAKEVEN'].includes(reason) ? MAKER_FEE : TAKER_FEE) * cfg.notional;
   const entryFee = MAKER_FEE * cfg.notional;
   return { gross: +gross.toFixed(2), fees: +(fees+entryFee).toFixed(2), net: +(gross-fees-entryFee).toFixed(2) };
 }
@@ -1037,6 +1089,18 @@ async function processSym(sym) {
       // true only while still on the fill candle — guards against breakeven-SL firing at fill
       const isFirstLongPoll = last.ts === lng.filledAtCandleTs;
 
+      // Early Limit Exit — fires on first adverse tick (25% of 2-tick SL), fee=0 (maker)
+      const slDollarsLong   = TOKEN_CONFIG[sym].notional * 2 * st.tick / lng.entry;
+      const earlyThreshLong = slDollarsLong * EARLY_EXIT_PCT;
+      if (!isFirstLongPoll && st.unrPnl <= -earlyThreshLong) {
+        const exitUnr = st.unrPnl;
+        st.unrPnl = 0;
+        dp(sym, p+'.14', 'LONG EARLY LIMIT EXIT', 'unrPnl='+fmtPnl(exitUnr)+' ≤ −'+fmtPnl(earlyThreshLong)+' (25% SL) @ '+fmtPrice(last.close,st.tick)+' → limit exit fee=0', 'warn');
+        closeTrade(sym, lng, last.close, 'EARLY_LIMIT');
+        resetBand(sym, 'long early limit exit — 25% SL threshold');
+        return;
+      }
+
       // TP: first poll where live close is above entry (unrPnl > 0)
       if (last.close > lng.entry) {
         st.unrPnl = 0;
@@ -1128,6 +1192,18 @@ async function processSym(sym) {
 
       // true only while still on the fill candle — guards against breakeven-SL firing at fill
       const isFirstShortPoll = last.ts === sht.filledAtCandleTs;
+
+      // Early Limit Exit — fires on first adverse tick (25% of 2-tick SL), fee=0 (maker)
+      const slDollarsShort   = TOKEN_CONFIG[sym].notional * 2 * st.tick / sht.entry;
+      const earlyThreshShort = slDollarsShort * EARLY_EXIT_PCT;
+      if (!isFirstShortPoll && st.unrPnl <= -earlyThreshShort) {
+        const exitUnr = st.unrPnl;
+        st.unrPnl = 0;
+        dp(sym, p+'.14', 'SHORT EARLY LIMIT EXIT', 'unrPnl='+fmtPnl(exitUnr)+' ≤ −'+fmtPnl(earlyThreshShort)+' (25% SL) @ '+fmtPrice(last.close,st.tick)+' → limit exit fee=0', 'warn');
+        closeTrade(sym, sht, last.close, 'EARLY_LIMIT');
+        resetBand(sym, 'short early limit exit — 25% SL threshold');
+        return;
+      }
 
       // TP: first poll where live close is below entry (unrPnl > 0)
       if (last.close < sht.entry) {
@@ -1678,10 +1754,20 @@ function clearAll() {
     localStorage.removeItem('mps_v1_'+s);
   });
   allTrades = [];
+  // ── Session start: stamp time, disable logging for clean run ──
+  sessionStartTs = Date.now();
+  sessionRunning = true;
+  pollerStopped  = false;
+  diagEnabled    = false;
+  SYMBOLS.forEach(sym => {
+    const btn = document.getElementById('diagToggleBtn_'+sym);
+    if (btn) { btn.textContent = 'Start Log'; btn.classList.remove('active'); }
+  });
   clearDiag();
   renderCombined();
   SYMBOLS.forEach(renderTicker);
   renderFullLog();
+  updateSimBanner();
 }
 
 // ── MAIN POLL ─────────────────────────────────────────────────────────────────
@@ -1720,7 +1806,17 @@ setInterval(renderSession, 60000);
 renderClock();
 renderSession();
 (async function schedulePoll() {
+  if (pollerStopped) return;
   await poll();
+  // Auto-stop at SESSION_END_H (09:00 EDT) when a session is running
+  if (sessionRunning && edtHour() >= SESSION_END_H) {
+    pollerStopped  = true;
+    sessionRunning = false;
+    updateSimBanner();
+    autoExportAll();
+    return;
+  }
+  updateSimBanner();
   setTimeout(schedulePoll, nextPollMs());
 })();
 pollDepth();
