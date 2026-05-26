@@ -371,7 +371,7 @@ const MAX_HOLD_CANDLES = 8;    // force-exit after this many post-fill candles
 const ZONE_TOLERANCE  = 1;    // extra ticks wide per zone (1 = catch 2-tick swings, reduces resets dramatically)
 const ZONE_WINDOW_N   = 4;    // 4 samples × 20s poll = ~80s minimum detection — matches manual read speed
 const ZONE_WINDOW_K   = 4;    // all 4 must be in-zone — no misses tolerated at this window size
-const ZONE_MIN_EACH   = 2;    // need at least 2L and 2H — minimum proof of two-sided oscillation
+const ZONE_MIN_EACH   = 1;    // need at least 1L and 1H — 1 touch per rail is sufficient proof
 const BAND_HOLD_HOURS = 4;    // hold a confirmed band this many hours if off-hours before expiry
 const BLACKOUT_H     = [9, 10];
 const CONFIRM_COUNT   = 3;    // shadow buffer depth (drift detection)
@@ -1005,6 +1005,9 @@ async function processSym(sym) {
     }
 
     // ── Normal detection via zone-window ─────────────────────────────────────
+    // Fix: new-candle closes always register — reset debounce so the open of a
+    // new candle is never silently dropped even if a live poll just fired.
+    if (isNewCandle) st.zwLastTs = 0;
     const result = updateZoneWindow(sym, last);
     const buf    = st.zwBuffer;
     const bStr   = buf.length ? '['+buf.join('')+'] L='+st.zwLowCount+' H='+st.zwHighCount+'/'+ZONE_WINDOW_K : 'empty';
