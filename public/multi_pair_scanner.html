@@ -1116,9 +1116,10 @@ async function processSym(sym) {
 
       // TP: first poll where live close is above entry (unrPnl > 0)
       if (last.close > lng.entry) {
+        const tpExit = Math.min(last.close, lng.target);
         st.unrPnl = 0;
-        dp(sym, p+'.14', 'LONG TP HIT', fmtPrice(last.close,st.tick)+' > E='+fmtPrice(lng.entry,st.tick)+' → WIN (unrPnl > 0)', 'ok');
-        closeTrade(sym, lng, last.close, 'TP');
+        dp(sym, p+'.14', 'LONG TP HIT', fmtPrice(last.close,st.tick)+' > E='+fmtPrice(lng.entry,st.tick)+' → WIN · exit capped @ '+fmtPrice(tpExit,st.tick), 'ok');
+        closeTrade(sym, lng, tpExit, 'TP');
         st.cycleTradeCount++;
         dp(sym, p+'.14b', 'CYCLE TP COUNT', st.cycleTradeCount, 'ok');
         st.activeDir = 'SHORT';
@@ -1136,10 +1137,10 @@ async function processSym(sym) {
         return;
       }
 
-      // Breakeven SL: price at or below entry (not in profit) — skip on the fill candle itself
-      if (!isFirstLongPoll && last.close <= lng.entry) {
+      // Breakeven SL: price strictly below entry — skip on the fill candle itself
+      if (!isFirstLongPoll && last.close < lng.entry) {
         st.unrPnl = 0;
-        dp(sym, p+'.14', 'LONG BREAKEVEN SL', fmtPrice(last.close,st.tick)+' <= E='+fmtPrice(lng.entry,st.tick)+' → BREAKEVEN exit', 'warn');
+        dp(sym, p+'.14', 'LONG BREAKEVEN SL', fmtPrice(last.close,st.tick)+' < E='+fmtPrice(lng.entry,st.tick)+' → BREAKEVEN exit', 'warn');
         closeTrade(sym, lng, lng.entry, 'BREAKEVEN');
         resetBand(sym, 'long breakeven SL — price returned to entry');
         return;
@@ -1168,9 +1169,9 @@ async function processSym(sym) {
         const fillHigh = fillCandles.length ? Math.max(...fillCandles.map(c => c.high)) : -Infinity;
         dp(sym, p+'.11', 'SHORT FILL CHECK', 'fillHigh='+fmtPrice(fillHigh,st.tick)+' vs E='+fmtPrice(sht.entry,st.tick), fillHigh >= sht.entry ? 'purple' : 'muted');
 
-        if (fillHigh > st.oscUpper) {
-          // Swept above band upper before short confirmed — spike up, reset
-          dp(sym, p+'.12', 'SHORT SPIKE SWEEP', 'high broke above band upper before short confirmed — reset', 'bad');
+        if (fillHigh > sht.sl) {
+          // Swept above short SL (E+2t) before short confirmed — spike up, reset
+          dp(sym, p+'.12', 'SHORT SPIKE SWEEP', 'high swept through short SL ('+fmtPrice(sht.sl,st.tick)+') before confirmed — reset', 'bad');
           st.openShort = null;
           resetBand(sym, 'spike swept through short SL without clean fill');
           return;
@@ -1220,9 +1221,10 @@ async function processSym(sym) {
 
       // TP: first poll where live close is below entry (unrPnl > 0)
       if (last.close < sht.entry) {
+        const tpExit = Math.max(last.close, sht.target);
         st.unrPnl = 0;
-        dp(sym, p+'.14', 'SHORT TP HIT', fmtPrice(last.close,st.tick)+' < E='+fmtPrice(sht.entry,st.tick)+' → WIN (unrPnl > 0)', 'ok');
-        closeTrade(sym, sht, last.close, 'TP');
+        dp(sym, p+'.14', 'SHORT TP HIT', fmtPrice(last.close,st.tick)+' < E='+fmtPrice(sht.entry,st.tick)+' → WIN · exit capped @ '+fmtPrice(tpExit,st.tick), 'ok');
+        closeTrade(sym, sht, tpExit, 'TP');
         st.cycleTradeCount++;
         dp(sym, p+'.14b', 'CYCLE TP COUNT', st.cycleTradeCount, 'ok');
         st.activeDir = 'LONG';
@@ -1240,10 +1242,10 @@ async function processSym(sym) {
         return;
       }
 
-      // Breakeven SL: price at or above entry (not in profit) — skip on the fill candle itself
-      if (!isFirstShortPoll && last.close >= sht.entry) {
+      // Breakeven SL: price strictly above entry — skip on the fill candle itself
+      if (!isFirstShortPoll && last.close > sht.entry) {
         st.unrPnl = 0;
-        dp(sym, p+'.14', 'SHORT BREAKEVEN SL', fmtPrice(last.close,st.tick)+' >= E='+fmtPrice(sht.entry,st.tick)+' → BREAKEVEN exit', 'warn');
+        dp(sym, p+'.14', 'SHORT BREAKEVEN SL', fmtPrice(last.close,st.tick)+' > E='+fmtPrice(sht.entry,st.tick)+' → BREAKEVEN exit', 'warn');
         closeTrade(sym, sht, sht.entry, 'BREAKEVEN');
         resetBand(sym, 'short breakeven SL — price returned to entry');
         return;
@@ -1788,7 +1790,11 @@ function clearAll() {
 // ── MAIN POLL ─────────────────────────────────────────────────────────────────
 async function poll() {
   await Promise.all(SYMBOLS.map(async sym => {
-    await processSym(sym);
+    try {
+      await processSym(sym);
+    } catch(e) {
+      dp(sym, 'poll.ERR', 'JS ERROR', (e && e.message) ? e.message : String(e), 'bad');
+    }
     renderTicker(sym);
   }));
   renderCombined();
