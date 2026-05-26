@@ -576,7 +576,7 @@ async function fetchCandles(symbol, limit) {
       low:   parseFloat(raw.low[i]),
       close: parseFloat(raw.close[i])
     })).sort((a,b) => a.ts - b.ts);
-  } catch(e) { console.error('[fetchCandles]', symbol, e.message); return []; }
+  } catch(e) { return []; }
 }
 
 async function fetchDepth(symbol) {
@@ -586,7 +586,7 @@ async function fetchDepth(symbol) {
     const d = await r.json();
     if (!d || !d.success || !d.data) return null;
     return d.data;
-  } catch(e) { console.error('[fetchDepth]', symbol, e.message); return null; }
+  } catch(e) { return null; }
 }
 
 function inferTick(c) {
