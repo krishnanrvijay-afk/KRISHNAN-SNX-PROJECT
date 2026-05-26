@@ -565,7 +565,7 @@ function roundTick(price, tick) {
 async function fetchCandles(symbol, limit) {
   try {
     const msym = MEXC_SYM[symbol] || symbol;
-    const r = await fetch('/api/kline/'+msym+'?interval='+CANDLE_INT+'&limit='+limit);
+    const r = await fetch('/proxy/mexc/kline?symbol='+msym+'&interval='+CANDLE_INT+'&limit='+limit);
     const d = await r.json();
     if (!d || !d.success || !d.data || !d.data.time || !d.data.time.length) return [];
     const raw = d.data;
@@ -582,7 +582,7 @@ async function fetchCandles(symbol, limit) {
 async function fetchDepth(symbol) {
   try {
     const msym = MEXC_SYM[symbol] || symbol;
-    const r = await fetch('/api/depth/'+msym+'?limit=10');
+    const r = await fetch('/proxy/mexc/depth?symbol='+msym+'&limit=10');
     const d = await r.json();
     if (!d || !d.success || !d.data) return null;
     return d.data;
