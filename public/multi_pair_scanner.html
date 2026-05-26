@@ -382,8 +382,9 @@ const diagLogs = {};
 SYMBOLS.forEach(s => { diagLogs[s] = []; });
 let diagEnabled    = true;
 let sessionStartTs = null;   // set when CLEAR is pressed to start a timed session
-let sessionRunning = false;  // true while session is active
-let pollerStopped  = false;  // set true on auto-stop
+let sessionRunning  = false;  // true while session is active
+let pollerStopped   = false;  // set true on auto-stop
+let sessionStartEdtH = 0;    // EDT hour when session started (guards against immediate re-stop)
 
 // Clear all stored state on every startup — fresh session each time
 SYMBOLS.forEach(sym => {
@@ -1764,10 +1765,11 @@ function clearAll() {
   });
   allTrades = [];
   // ── Session start: stamp time, disable logging for clean run ──
-  sessionStartTs = Date.now();
-  sessionRunning = true;
-  pollerStopped  = false;
-  diagEnabled    = false;
+  sessionStartTs   = Date.now();
+  sessionStartEdtH = edtHour();
+  sessionRunning   = true;
+  pollerStopped    = false;
+  diagEnabled      = false;
   SYMBOLS.forEach(sym => {
     const btn = document.getElementById('diagToggleBtn_'+sym);
     if (btn) { btn.textContent = 'Start Log'; btn.classList.remove('active'); }
@@ -1777,6 +1779,7 @@ function clearAll() {
   SYMBOLS.forEach(renderTicker);
   renderFullLog();
   updateSimBanner();
+  schedulePoll();   // restart the poll loop (was killed by auto-stop)
 }
 
 // ── MAIN POLL ─────────────────────────────────────────────────────────────────
@@ -1814,11 +1817,13 @@ setInterval(renderClock, 1000);
 setInterval(renderSession, 60000);
 renderClock();
 renderSession();
-(async function schedulePoll() {
+async function schedulePoll() {
   if (pollerStopped) return;
   await poll();
-  // Auto-stop at SESSION_END_H (09:00 EDT) when a session is running
-  if (sessionRunning && edtHour() >= SESSION_END_H) {
+  // Auto-stop at SESSION_END_H (09:00 EDT) — only if the session started before that hour.
+  // Guard: if user hit CLEAR after 09:00 EDT, sessionStartEdtH >= SESSION_END_H so we skip
+  // the auto-stop and let the new session run uninterrupted.
+  if (sessionRunning && edtHour() >= SESSION_END_H && sessionStartEdtH < SESSION_END_H) {
     pollerStopped  = true;
     sessionRunning = false;
     updateSimBanner();
@@ -1827,7 +1832,8 @@ renderSession();
   }
   updateSimBanner();
   setTimeout(schedulePoll, nextPollMs());
-})();
+}
+schedulePoll();
 pollDepth();
 setInterval(pollDepth, DEPTH_POLL);
 </script>
