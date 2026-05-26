@@ -350,6 +350,13 @@ const TOKEN_CONFIG = {
   },
 };
 const SYMBOLS        = ['FILUSDT', 'XRPUSDT', 'AVAXUSDT', 'AAVEUSDT'];
+// MEXC API symbol map — internal key → MEXC contract name (FIL was renamed to FILECOIN)
+const MEXC_SYM = {
+  FILUSDT:  'FILECOIN_USDT',
+  XRPUSDT:  'XRP_USDT',
+  AVAXUSDT: 'AVAX_USDT',
+  AAVEUSDT: 'AAVE_USDT',
+};
 const TAKER_FEE      = 0.0002;
 const MAKER_FEE      = 0;
 const EARLY_EXIT_PCT = 0.25;   // exit when unrPnl hits 25% of 2-tick SL → fires on first adverse tick
@@ -557,7 +564,8 @@ function roundTick(price, tick) {
 // ── FETCH ─────────────────────────────────────────────────────────────────────
 async function fetchCandles(symbol, limit) {
   try {
-    const r = await fetch('/proxy/mexc/kline?symbol='+symbol+'&interval='+CANDLE_INT+'&limit='+limit);
+    const msym = MEXC_SYM[symbol] || symbol;
+    const r = await fetch('/api/kline/'+msym+'?interval='+CANDLE_INT+'&limit='+limit);
     const d = await r.json();
     if (!d || !d.success || !d.data || !d.data.time || !d.data.time.length) return [];
     const raw = d.data;
@@ -568,16 +576,17 @@ async function fetchCandles(symbol, limit) {
       low:   parseFloat(raw.low[i]),
       close: parseFloat(raw.close[i])
     })).sort((a,b) => a.ts - b.ts);
-  } catch(e) { return []; }
+  } catch(e) { console.error('[fetchCandles]', symbol, e.message); return []; }
 }
 
 async function fetchDepth(symbol) {
   try {
-    const r = await fetch('/proxy/mexc/depth?symbol='+symbol+'&limit=10');
+    const msym = MEXC_SYM[symbol] || symbol;
+    const r = await fetch('/api/depth/'+msym+'?limit=10');
     const d = await r.json();
     if (!d || !d.success || !d.data) return null;
     return d.data;
-  } catch(e) { return null; }
+  } catch(e) { console.error('[fetchDepth]', symbol, e.message); return null; }
 }
 
 function inferTick(c) {
