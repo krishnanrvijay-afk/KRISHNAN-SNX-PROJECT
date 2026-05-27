@@ -52,6 +52,20 @@
   /* ── BLACKOUT ── */
   .blackout { background: rgba(255,61,61,0.08); border: 1px solid rgba(255,61,61,0.25); border-radius: 5px; padding: 7px 12px; margin-bottom: 10px; color: var(--red); font-size: 11px; font-weight: 700; text-align: center; display: none; }
 
+  /* ── DOWNLOAD MODAL ── */
+  .dl-modal-overlay { display:none; position:fixed; inset:0; z-index:9999; background:rgba(0,0,0,0.88); align-items:center; justify-content:center; }
+  .dl-modal-overlay.open { display:flex; }
+  .dl-modal { background:#080f08; border:1px solid rgba(0,230,118,0.35); border-radius:10px; padding:28px 28px 20px; width:92%; max-width:360px; text-align:center; }
+  .dl-modal-title { font-family:'Bebas Neue',sans-serif; font-size:26px; letter-spacing:3px; color:#00e676; margin-bottom:4px; }
+  .dl-modal-sub { font-size:10px; color:#4a6272; margin-bottom:18px; line-height:1.8; }
+  .dl-btn { display:block; width:100%; padding:9px 12px; margin-bottom:8px; border-radius:5px; font-family:'Bebas Neue',sans-serif; font-size:15px; letter-spacing:1.5px; cursor:pointer; border:1px solid rgba(0,200,255,0.3); background:rgba(0,200,255,0.1); color:#00c8ff; transition:background 0.15s; }
+  .dl-btn:hover { background:rgba(0,200,255,0.22); }
+  .dl-btn.trade { border-color:rgba(0,230,118,0.35); background:rgba(0,230,118,0.08); color:#00e676; }
+  .dl-btn.trade:hover { background:rgba(0,230,118,0.2); }
+  .dl-restart-note { font-size:9px; color:#2a4a2a; margin-top:6px; margin-bottom:2px; }
+  .dl-dismiss { margin-top:12px; background:none; border:1px solid #1a2a1a; color:#4a6272; border-radius:4px; padding:6px 20px; font-family:'Bebas Neue',sans-serif; font-size:13px; letter-spacing:1px; cursor:pointer; }
+  .dl-dismiss:hover { border-color:#2a4a2a; color:#6a8a6a; }
+
   /* ── COMBINED BAR ── */
   .combined { display: grid; grid-template-columns: repeat(5,1fr); gap: 6px; margin-bottom: 12px; }
   .cpill { background: var(--card); border: 1px solid var(--border); border-radius: 5px; padding: 10px 8px; text-align: center; }
@@ -285,6 +299,21 @@
   <div class="blackout" id="blackoutBanner">⛔ NY OPEN BLACKOUT 09:00–11:00 EDT — NO NEW TRADES</div>
   <div class="sim-banner" id="simBanner" style="display:none"></div>
 
+<!-- DOWNLOAD MODAL -->
+<div class="dl-modal-overlay" id="downloadModal">
+  <div class="dl-modal">
+    <div class="dl-modal-title">SESSION COMPLETE</div>
+    <div class="dl-modal-sub">Auto-stopped 09:00 EDT · Blackout 09:00–11:00 EDT<br>Scanner auto-restarts at 11:00 EDT</div>
+    <button class="dl-btn" onclick="exportDiagCSV('FILUSDT')">↓ FIL Diagnostic Log</button>
+    <button class="dl-btn" onclick="exportDiagCSV('XRPUSDT')">↓ XRP Diagnostic Log</button>
+    <button class="dl-btn" onclick="exportDiagCSV('AVAXUSDT')">↓ AVAX Diagnostic Log</button>
+    <button class="dl-btn" onclick="exportDiagCSV('AAVEUSDT')">↓ AAVE Diagnostic Log</button>
+    <button class="dl-btn trade" onclick="exportTradeCSV()">↓ Session Trade Log</button>
+    <div class="dl-restart-note">Files also attempted auto-download · click each if browser blocked them</div>
+    <button class="dl-dismiss" onclick="closeDownloadModal()">DISMISS</button>
+  </div>
+</div>
+
   <div class="combined">
     <div class="cpill"><div class="cpill-label">Total P&L</div><div class="cpill-value" id="totalPnl">+$0</div></div>
     <div class="cpill"><div class="cpill-label">Win Rate</div><div class="cpill-value" id="totalWr">--</div></div>
@@ -410,7 +439,23 @@ function exportDiagCSV(sym) {
   const a    = document.createElement('a');
   const lbl  = TOKEN_CONFIG[sym] ? TOKEN_CONFIG[sym].label : sym;
   a.href = url; a.download = lbl+'_diag_'+new Date().toISOString().slice(0,16).replace(/[T:]/g,'-')+'.csv';
-  a.click(); URL.revokeObjectURL(url);
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function exportTradeCSV() {
+  const trades = allTrades;
+  if (!trades.length) { alert('No trades recorded this session.'); return; }
+  const hdr  = 'Sym,Direction,Entry,Exit,Reason,Gross,Fees,Net,Outcome,HoldMin,TimeOpen,TimeClose\n';
+  const rows = trades.map(t =>
+    [t.sym,t.direction,t.entry,t.exit,t.exitReason,t.gross,t.fees,t.net,t.outcome,t.holdMinutes,t.timeOpen,t.timeClose].join(',')
+  ).join('\n');
+  const blob = new Blob([hdr+rows],{type:'text/csv'});
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = 'session_trades_'+new Date().toISOString().slice(0,16).replace(/[T:]/g,'-')+'.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 function renderDiag(sym) {
@@ -521,26 +566,33 @@ function updateSimBanner() {
   const startStr = new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(sessionStartTs));
   el.style.display = 'flex';
   el.className = 'sim-banner running';
-  el.innerHTML = '<span>SESSION RUNNING · started '+startStr+' EDT · logging off</span><span>elapsed '+hh+'h '+mm+'m · stops 09:00 EDT</span>';
+  el.innerHTML = '<span>SESSION RUNNING · started '+startStr+' EDT · logging on</span><span>elapsed '+hh+'h '+mm+'m · stops 09:00 EDT</span>';
 }
 
 function autoExportAll() {
   SYMBOLS.forEach((sym, i) => {
     setTimeout(() => exportDiagCSV(sym), i * 400);
   });
-  setTimeout(() => {
-    const trades = allTrades;
-    if (!trades.length) return;
-    const hdr  = 'Sym,Direction,Entry,Exit,Reason,Gross,Fees,Net,Outcome,HoldMin,TimeOpen,TimeClose\n';
-    const rows  = trades.map(t =>
-      [t.sym,t.direction,t.entry,t.exit,t.exitReason,t.gross,t.fees,t.net,t.outcome,t.holdMinutes,t.timeOpen,t.timeClose].join(',')
-    ).join('\n');
-    const blob  = new Blob([hdr+rows],{type:'text/csv'});
-    const url   = URL.createObjectURL(blob);
-    const a     = document.createElement('a');
-    a.href = url; a.download = 'session_trades_'+new Date().toISOString().slice(0,16).replace(/[T:]/g,'-')+'.csv';
-    a.click(); URL.revokeObjectURL(url);
-  }, SYMBOLS.length * 400 + 200);
+  setTimeout(exportTradeCSV, SYMBOLS.length * 400 + 200);
+  setTimeout(showDownloadModal, SYMBOLS.length * 400 + 800);
+}
+
+function showDownloadModal() {
+  document.getElementById('downloadModal').classList.add('open');
+}
+function closeDownloadModal() {
+  document.getElementById('downloadModal').classList.remove('open');
+}
+
+function scheduleAutoRestart() {
+  const now   = new Date();
+  const parts = new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',
+    hour:'numeric', minute:'numeric', second:'numeric', hour12:false}).formatToParts(now);
+  const get   = t => +parts.find(p => p.type === t).value;
+  const h = get('hour'), m = get('minute'), s = get('second');
+  if (h >= 11) { closeDownloadModal(); clearAll(); return; }
+  const msUntil11 = ((11 - h) * 3600 - m * 60 - s) * 1000;
+  setTimeout(() => { closeDownloadModal(); clearAll(); }, msUntil11);
 }
 function sessionName(h) {
   if (h < 3) return 'Asia'; if (h < 9) return 'London';
@@ -1769,15 +1821,15 @@ function clearAll() {
     localStorage.removeItem('mps_v1_'+s);
   });
   allTrades = [];
-  // ── Session start: stamp time, disable logging for clean run ──
+  // ── Session start: stamp time, enable logging automatically ──
   sessionStartTs   = Date.now();
   sessionStartEdtH = edtHour();
   sessionRunning   = true;
   pollerStopped    = false;
-  diagEnabled      = false;
+  diagEnabled      = true;
   SYMBOLS.forEach(sym => {
     const btn = document.getElementById('diagToggleBtn_'+sym);
-    if (btn) { btn.textContent = 'Start Log'; btn.classList.remove('active'); }
+    if (btn) { btn.textContent = 'Stop Log'; btn.classList.add('active'); }
   });
   clearDiag();
   renderCombined();
@@ -1837,6 +1889,7 @@ async function schedulePoll() {
     sessionRunning = false;
     updateSimBanner();
     autoExportAll();
+    scheduleAutoRestart();
     return;
   }
   updateSimBanner();
