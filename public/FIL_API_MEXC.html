@@ -59,6 +59,19 @@
   .conn-err   { color: var(--red); }
   .conn-check { color: var(--yellow); }
   .closeall-btn { background: rgba(255,61,61,0.14); border: 1px solid rgba(255,61,61,0.4); color: var(--red); padding: 3px 10px; border-radius: 3px; font-family: 'Bebas Neue', sans-serif; font-size: 13px; letter-spacing: 1px; cursor: pointer; }
+  .closeall-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+  /* ── API ENABLE TOGGLE ── */
+  .api-toggle-wrap { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+  .api-toggle-wrap input[type=checkbox] { position: absolute; opacity: 0; width: 0; height: 0; }
+  .api-toggle-track { position: relative; width: 40px; height: 22px; background: #1a2530; border: 1px solid #2a3a4a; border-radius: 11px; transition: background 0.2s, border-color 0.2s; flex-shrink: 0; }
+  .api-toggle-thumb { position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; background: #3a5060; border-radius: 50%; transition: transform 0.2s, background 0.2s; }
+  .api-toggle-wrap input:checked ~ .api-toggle-track { background: rgba(0,230,118,0.18); border-color: var(--green); }
+  .api-toggle-wrap input:checked ~ .api-toggle-track .api-toggle-thumb { transform: translateX(18px); background: var(--green); }
+  .api-toggle-label { font-family: 'Bebas Neue', sans-serif; font-size: 14px; letter-spacing: 1.5px; color: var(--muted); transition: color 0.2s; }
+  .api-toggle-wrap input:checked ~ .api-toggle-label { color: var(--green); }
+  .api-panel.disabled { border-color: rgba(74,98,114,0.2); opacity: 0.6; }
+  .api-panel.disabled .api-panel-title { color: var(--muted); }
 
   /* ── COMBINED BAR ── */
   .combined { display: grid; grid-template-columns: repeat(4,1fr); gap: 6px; margin-bottom: 12px; }
@@ -208,10 +221,14 @@
   </div>
 
   <!-- API STATUS PANEL -->
-  <div class="api-panel">
+  <div class="api-panel disabled" id="apiPanel">
     <div class="api-panel-title">
-      <span>API STATUS · MEXC DEMO</span>
-      <button class="closeall-btn" onclick="emergencyCloseAll()">⚠ CLOSE ALL</button>
+      <label class="api-toggle-wrap" title="Enable to send real orders to MEXC demo account">
+        <input type="checkbox" id="apiToggle" onchange="toggleApi()">
+        <span class="api-toggle-track"><span class="api-toggle-thumb"></span></span>
+        <span class="api-toggle-label" id="apiToggleLabel">API OFF · PAPER ONLY</span>
+      </label>
+      <button class="closeall-btn" id="closeAllBtn" onclick="emergencyCloseAll()" disabled title="Enable API first">⚠ CLOSE ALL</button>
     </div>
     <div class="api-row">
       <span class="api-row-label">Connection</span>
@@ -294,6 +311,10 @@ const MEXC_SYM  = { FILUSDT: 'FILECOIN_USDT' };
 // Increase after confirming API connectivity on demo.
 const API_LOTS      = 100;
 const API_LEVERAGE  = 50;
+
+// ── API ENABLE FLAG ───────────────────────────────────────────────────────────
+// Starts OFF — paper simulation runs regardless.  Toggle ON to send real orders.
+let apiEnabled = false;
 
 // ── TRADING CONSTANTS ─────────────────────────────────────────────────────────
 const TAKER_FEE      = 0.0002;
@@ -441,6 +462,7 @@ function setApiStatus(field, value, cls) {
 }
 
 async function apiOpenLong(sym) {
+  if (!apiEnabled) { dp(sym, pollCount+'.API', 'API SKIP', 'toggle off — paper only', 'muted'); return; }
   const st = state[sym];
   const price = st.oscLower;
   const qty   = API_LOTS;
@@ -467,6 +489,7 @@ async function apiOpenLong(sym) {
 }
 
 async function apiPlaceExits(sym) {
+  if (!apiEnabled) { dp(sym, pollCount+'.API', 'API SKIP', 'toggle off — no exits placed', 'muted'); return; }
   const st  = state[sym];
   const lng = st.openLong;
   if (!lng) return;
@@ -518,6 +541,7 @@ async function apiPlaceExits(sym) {
 }
 
 async function apiCancelEntry(sym) {
+  if (!apiEnabled) return;
   const st = state[sym];
   if (!st.apiEntryOrderId) return;
   const oid = st.apiEntryOrderId;
@@ -538,6 +562,7 @@ async function apiCancelEntry(sym) {
 }
 
 async function apiCancelTp(sym) {
+  if (!apiEnabled) return;
   const st = state[sym];
   if (!st.apiTpOrderId) return;
   const oid = st.apiTpOrderId;
@@ -558,6 +583,7 @@ async function apiCancelTp(sym) {
 }
 
 async function apiCancelSl(sym) {
+  if (!apiEnabled) return;
   const st = state[sym];
   if (!st.apiSlOrderId) return;
   const oid = st.apiSlOrderId;
@@ -584,6 +610,7 @@ async function apiCancelAll(sym) {
 
 // Emergency close: market-close entire position
 async function emergencyCloseAll() {
+  if (!apiEnabled) { alert('Enable the API toggle first before using CLOSE ALL.'); return; }
   const sym = 'FILUSDT';
   dp(sym, 'MANUAL', 'EMERGENCY CLOSE ALL', 'market close vol='+API_LOTS, 'bad');
   try {
@@ -600,8 +627,36 @@ async function emergencyCloseAll() {
   }
 }
 
+// ── TOGGLE API ON / OFF ───────────────────────────────────────────────────────
+function toggleApi() {
+  apiEnabled = document.getElementById('apiToggle').checked;
+  const panel    = document.getElementById('apiPanel');
+  const label    = document.getElementById('apiToggleLabel');
+  const closeBtn = document.getElementById('closeAllBtn');
+
+  if (apiEnabled) {
+    panel.classList.remove('disabled');
+    label.textContent = 'API ON · LIVE ORDERS';
+    closeBtn.disabled = false;
+    dp('FILUSDT', 'API.TOG', 'API ENABLED', 'live order execution active · running health check', 'ok');
+    apiHealthCheck();
+  } else {
+    panel.classList.add('disabled');
+    label.textContent = 'API OFF · PAPER ONLY';
+    closeBtn.disabled = true;
+    dp('FILUSDT', 'API.TOG', 'API DISABLED', 'reverted to paper mode · cancelling open orders', 'warn');
+    // Cancel any outstanding orders safely
+    apiCancelAll('FILUSDT');
+    ['EntryId','TpId','SlId'].forEach(f => setApiStatus(f, '—', ''));
+    document.getElementById('apiLastEvent').textContent = 'API disabled';
+    const conn = document.getElementById('apiConn');
+    if (conn) { conn.textContent = 'DISABLED'; conn.className = 'api-row-val'; }
+  }
+}
+
 // ── HEALTH CHECK ──────────────────────────────────────────────────────────────
 async function apiHealthCheck() {
+  if (!apiEnabled) return;
   const el = document.getElementById('apiConn');
   if (el) { el.textContent = 'CHECKING…'; el.className = 'api-row-val conn-check'; }
   try {
@@ -1241,8 +1296,11 @@ renderClock(); renderSession();
 // Show lot size in API panel
 document.getElementById('apiLotsDisplay').textContent = API_LOTS + ' contracts · ' + API_LEVERAGE + 'x leverage';
 
-// Health check on load
-apiHealthCheck();
+// API starts disabled — show that in the connection row immediately
+(function() {
+  const conn = document.getElementById('apiConn');
+  if (conn) { conn.textContent = 'DISABLED · toggle to enable'; conn.className = 'api-row-val'; }
+})();
 
 sessionStartTs   = Date.now();
 sessionStartEdtH = edtHour();
