@@ -1,0 +1,2 @@
+[deploy]
+startCommand = "node server_fil_api.js"
