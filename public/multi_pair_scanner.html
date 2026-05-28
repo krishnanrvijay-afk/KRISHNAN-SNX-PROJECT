@@ -308,6 +308,9 @@
     <button class="dl-btn" onclick="exportDiagCSV('XRPUSDT')">↓ XRP Diagnostic Log</button>
     <button class="dl-btn" onclick="exportDiagCSV('AVAXUSDT')">↓ AVAX Diagnostic Log</button>
     <button class="dl-btn" onclick="exportDiagCSV('AAVEUSDT')">↓ AAVE Diagnostic Log</button>
+    <button class="dl-btn" onclick="exportDiagCSV('SNXUSDT')">↓ SNX Diagnostic Log</button>
+    <button class="dl-btn" onclick="exportDiagCSV('CRVUSDT')">↓ CRV Diagnostic Log</button>
+    <button class="dl-btn" onclick="exportDiagCSV('ATOMUSDT')">↓ ATOM Diagnostic Log</button>
     <button class="dl-btn trade" onclick="exportTradeCSV()">↓ Session Trade Log</button>
     <div class="dl-restart-note">Files also attempted auto-download · click each if browser blocked them</div>
     <button class="dl-dismiss" onclick="closeDownloadModal()">DISMISS</button>
@@ -325,7 +328,7 @@
   <div id="tickerCards"></div>
   <div id="diagCards"></div>
 
-  <div class="footer">FIL $50K · XRP $100K · AVAX $75K · AAVE $50K · 50x · MEXC data · paper mode · ZONE-WINDOW BUILD</div>
+  <div class="footer">FIL $50K · XRP $100K · AVAX $75K · AAVE $50K · SNX $50K · CRV $50K · ATOM $50K · 50x · MEXC data · paper mode · ZONE-WINDOW BUILD</div>
 </div>
 
 <!-- TRADE LOG TAB -->
@@ -377,14 +380,29 @@ const TOKEN_CONFIG = {
     margin: 1000, leverage: 50, notional: 50000, contractSize: 1,
     bestHours: [14,15,16,17,18,19], label: 'AAVE', tick: 0.01
   },
+  SNXUSDT: {
+    margin: 1000, leverage: 50, notional: 50000, contractSize: 1,
+    bestHours: [8,9,11,12], label: 'SNX', tick: 0.0001
+  },
+  CRVUSDT: {
+    margin: 1000, leverage: 50, notional: 50000, contractSize: 1,
+    bestHours: [3,4,8,9], label: 'CRV', tick: 0.0001
+  },
+  ATOMUSDT: {
+    margin: 1000, leverage: 50, notional: 50000, contractSize: 1,
+    bestHours: [9,19,22,23], label: 'ATOM', tick: 0.001
+  },
 };
-const SYMBOLS        = ['FILUSDT', 'XRPUSDT', 'AVAXUSDT', 'AAVEUSDT'];
+const SYMBOLS        = ['FILUSDT', 'XRPUSDT', 'AVAXUSDT', 'AAVEUSDT', 'SNXUSDT', 'CRVUSDT', 'ATOMUSDT'];
 // MEXC API symbol map — internal key → MEXC contract name (FIL was renamed to FILECOIN)
 const MEXC_SYM = {
   FILUSDT:  'FILECOIN_USDT',
   XRPUSDT:  'XRP_USDT',
   AVAXUSDT: 'AVAX_USDT',
   AAVEUSDT: 'AAVE_USDT',
+  SNXUSDT:  'SNX_USDT',
+  CRVUSDT:  'CRV_USDT',
+  ATOMUSDT: 'ATOM_USDT',
 };
 const TAKER_FEE      = 0.0002;
 const MAKER_FEE      = 0;
