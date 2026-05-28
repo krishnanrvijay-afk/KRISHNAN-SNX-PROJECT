@@ -4,7 +4,12 @@
   "description": "SNX Scalper Dashboard",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "start:fil": "node server_fil_api.js",
+    "start:all": "node server.js & node server_fil_api.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   },
   "dependencies": {
     "axios": "^1.6.0",
