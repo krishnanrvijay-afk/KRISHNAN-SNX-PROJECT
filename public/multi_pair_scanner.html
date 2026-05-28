@@ -366,7 +366,7 @@ window.onerror = function(msg, src, line) {
 const TOKEN_CONFIG = {
   FILUSDT: {
     margin: 1000, leverage: 50, notional: 50000, contractSize: 0.01,
-    bestHours: [0,1,14,15], label: 'FIL', tick: 0.001
+    bestHours: [13,14,15,16], label: 'FIL', tick: 0.001
   },
   XRPUSDT: {
     margin: 2000, leverage: 50, notional: 100000, contractSize: 1,
@@ -553,7 +553,8 @@ let pollCount = 0;
 
 // ── TIME ──────────────────────────────────────────────────────────────────────
 function edtHour() {
-  return parseInt(new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',hour:'numeric',hour12:false}).format(new Date()),10);
+  const h = parseInt(new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',hour:'numeric',hour12:false}).format(new Date()),10);
+  return h === 24 ? 0 : h;  // Intl may return 24 at midnight instead of 0
 }
 function nyTzName() {
   const s = new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',timeZoneName:'short'}).format(new Date());
@@ -1064,11 +1065,19 @@ async function processSym(sym) {
       if (!stillInZone) {
         dp(sym, p+'.9', 'BAND EXPIRED', 'live close '+fmtPrice(livePrice,st.tick)+' outside held zone '+fmtPrice(st.oscLower,st.tick)+'–'+fmtPrice(st.oscUpper,st.tick)+' → reset', 'bad');
         resetBand(sym, 'held band expired — price broke out of zone');
+        // Re-check blackout immediately after reset — next poll may be triggered by another
+        // symbol's active trade (faster interval), so enforce the gate here too.
+        if (inBlackoutSym(sym)) {
+          dp(sym, p+'.9b', 'BLACKOUT SKIP', 'post-reset — outside best hours ['+TOKEN_CONFIG[sym].bestHours.map(h=>String(h).padStart(2,'0')+':00').join(' ')+' EDT]', 'muted');
+        }
         return;
       }
       if (heldHrs >= BAND_HOLD_HOURS) {
         dp(sym, p+'.9', 'BAND EXPIRED', 'held '+heldHrs.toFixed(1)+'h >= '+BAND_HOLD_HOURS+'h max → reset', 'bad');
         resetBand(sym, 'held band expired — max hold time exceeded');
+        if (inBlackoutSym(sym)) {
+          dp(sym, p+'.9b', 'BLACKOUT SKIP', 'post-reset — outside best hours ['+TOKEN_CONFIG[sym].bestHours.map(h=>String(h).padStart(2,'0')+':00').join(' ')+' EDT]', 'muted');
+        }
         return;
       }
       if (!inBlackoutSym(sym)) {
