@@ -370,7 +370,8 @@ const TOKEN_CONFIG = {
   },
   XRPUSDT: {
     margin: 2000, leverage: 50, notional: 100000, contractSize: 1,
-    bestHours: [22,23,0,1,2,3], label: 'XRP', tick: 0.0001
+    bestHours: [22,23,0,1,2,3], label: 'XRP', tick: 0.0001,
+    longOnly: true,
   },
   AVAXUSDT: {
     margin: 1500, leverage: 50, notional: 75000, contractSize: 1,
@@ -565,6 +566,8 @@ function edtMinute() {
   return parseInt(new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',minute:'numeric'}).format(new Date()),10);
 }
 function inBlackout() { return BLACKOUT_H.includes(edtHour()); }
+// Per-symbol blackout: true when current EDT hour is NOT in the symbol's best hours
+function inBlackoutSym(sym) { return !TOKEN_CONFIG[sym].bestHours.includes(edtHour()); }
 
 function updateSimBanner() {
   const el = document.getElementById('simBanner');
@@ -1013,6 +1016,12 @@ async function processSym(sym) {
   const p  = pollCount;
   const st = state[sym];
 
+  // Skip polling during per-symbol blackout unless a band is held or a trade is live
+  if (inBlackoutSym(sym) && !st.zwHeldTs && !st.inOsc) {
+    dp(sym, p+'.1', 'BLACKOUT SKIP', 'no poll — outside best hours ['+TOKEN_CONFIG[sym].bestHours.map(h=>String(h).padStart(2,'0')+':00').join(' ')+' EDT]', 'muted');
+    return;
+  }
+
   const limit = st.candles.length >= 25 ? 4 : 25;
   dp(sym, p+'.1', 'POLL START', 'fetching '+limit+' candles', 'muted');
 
@@ -1062,7 +1071,7 @@ async function processSym(sym) {
         resetBand(sym, 'held band expired — max hold time exceeded');
         return;
       }
-      if (!inBlackout()) {
+      if (!inBlackoutSym(sym)) {
         dp(sym, p+'.9', 'BAND ARMING', 'held band '+fmtPrice(st.oscLower,st.tick)+'–'+fmtPrice(st.oscUpper,st.tick)+' · blackout cleared → arm LONG', 'ok');
         st.zwHeldTs = null;
         st.inOsc    = true;
@@ -1092,17 +1101,17 @@ async function processSym(sym) {
       st.bandConfirmCount++;
       dp(sym, p+'.10', 'BAND CONFIRMED', 'zone '+fmtPrice(st.oscLower,st.tick)+' – '+fmtPrice(st.oscUpper,st.tick)+' #'+st.bandConfirmCount, 'ok');
 
-      if (!inBlackout()) {
-        // Arm immediately — session-agnostic
+      if (!inBlackoutSym(sym)) {
+        // Arm immediately — within best hours
         st.inOsc    = true;
         st.zwHeldTs = null;
         st.action   = 'ARMED';
         openLong(sym, last);
       } else {
-        // Blackout — hold and arm when it clears
+        // Per-symbol blackout — hold and arm when best-hours window opens
         st.zwHeldTs = Date.now();
         st.action   = 'WAIT';
-        dp(sym, p+'.11', 'BLACKOUT HOLD', 'band confirmed · arming blocked during blackout hours · holding up to '+BAND_HOLD_HOURS+'h', 'warn');
+        dp(sym, p+'.11', 'BLACKOUT HOLD', 'band confirmed · arming blocked outside best hours · holding up to '+BAND_HOLD_HOURS+'h', 'warn');
       }
     } else {
       dp(sym, p+'.10', 'WAITING FOR BAND', 'K-of-N zone-window · N='+ZONE_WINDOW_N+' K='+ZONE_WINDOW_K+' · buf='+buf.length, 'muted');
@@ -1119,8 +1128,8 @@ async function processSym(sym) {
       dp(sym, p+'.10', 'ACTIVE DIR', 'LONG', 'ok');
 
       if (!st.openLong) {
-        // No long — arm one if not in blackout
-        if (!inBlackout()) {
+        // No long — arm one if within best hours
+        if (!inBlackoutSym(sym)) {
           openLong(sym, last);
         }
         return;
@@ -1192,9 +1201,15 @@ async function processSym(sym) {
         closeTrade(sym, lng, tpExit, 'TP');
         st.cycleTradeCount++;
         dp(sym, p+'.14b', 'CYCLE TP COUNT', st.cycleTradeCount, 'ok');
-        st.activeDir = 'SHORT';
-        st.action    = 'SHORT_ARMED';
-        if (!inBlackout()) openShort(sym, last);
+        if (TOKEN_CONFIG[sym].longOnly) {
+          // XRP and any longOnly symbols: take profit, reset band, wait for next zone
+          dp(sym, p+'.14c', 'LONG-ONLY', 'TP banked · resetting for next band', 'ok');
+          resetBand(sym, 'long-only: TP banked — waiting for new zone');
+        } else {
+          st.activeDir = 'SHORT';
+          st.action    = 'SHORT_ARMED';
+          if (!inBlackoutSym(sym)) openShort(sym, last);
+        }
         return;
       }
 
@@ -1225,7 +1240,7 @@ async function processSym(sym) {
       dp(sym, p+'.10', 'ACTIVE DIR', 'SHORT', 'purple');
 
       if (!st.openShort) {
-        if (!inBlackout()) {
+        if (!inBlackoutSym(sym)) {
           openShort(sym, last);
         }
         return;
@@ -1299,7 +1314,7 @@ async function processSym(sym) {
         dp(sym, p+'.14b', 'CYCLE TP COUNT', st.cycleTradeCount, 'ok');
         st.activeDir = 'LONG';
         st.action    = 'ARMED';
-        if (!inBlackout()) openLong(sym, last);
+        if (!inBlackoutSym(sym)) openLong(sym, last);
         return;
       }
 
@@ -1544,9 +1559,14 @@ function renderTicker(sym) {
       '</div></div>';
   }
 
+  const longOnlyPanel = '<div class="bp-dual-side" style="display:flex;flex-direction:column;align-items:center;justify-content:center;border-left:1px solid #162028;gap:4px">'+
+    '<div style="font-size:9px;font-weight:700;letter-spacing:2px;color:#2a3a4a">SHORT</div>'+
+    '<div style="font-size:8px;font-weight:700;letter-spacing:1px;color:#00e676;padding:2px 8px;border:1px solid #00e67630;border-radius:3px;background:#00e67608">LONG ONLY</div>'+
+    '<div style="font-size:8px;color:#2a3a4a;margin-top:2px">one leg per band</div>'+
+    '</div>';
   const dualOrderHtml = st.inOsc
-    ? '<div class="bp-dual">' + orderCell(lng, 'LONG') + orderCell(sht, 'SHORT') + '</div>'
-    : '<div class="bp-dual">' + orderCell(null,'LONG') + orderCell(null,'SHORT') + '</div>';
+    ? '<div class="bp-dual">' + orderCell(lng, 'LONG') + (cfg.longOnly ? longOnlyPanel : orderCell(sht, 'SHORT')) + '</div>'
+    : '<div class="bp-dual">' + orderCell(null,'LONG') + (cfg.longOnly ? longOnlyPanel : orderCell(null,'SHORT')) + '</div>';
 
   // Meta
   const projLong  = lng ? (cfg.notional * st.tick / (lng.entry||1)).toFixed(2) : null;
@@ -1556,7 +1576,9 @@ function renderTicker(sym) {
       ? '<span style="color:#ffd740">LONG: proj +$'+projLong+'</span>'
       : sht && !sht.fillConfirmed
         ? '<span style="color:#b388ff">SHORT armed · 1tk TP</span>'
-        : '<span>watching for band</span>') +
+        : cfg.longOnly
+          ? '<span style="color:#00e676">LONG ONLY · 1tk TP</span>'
+          : '<span>watching for band</span>') +
   '</div>';
 
   // Best hours
