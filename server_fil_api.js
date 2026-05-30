@@ -9,8 +9,6 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ── MEXC CONFIG ───────────────────────────────────────────────────────────────
-// Demo and live accounts both hit the same base URL — credentials determine
-// which account is used.  Set MEXC_API_KEY and MEXC_API_SECRET in env secrets.
 const MEXC_BASE  = 'https://contract.mexc.com';
 const API_KEY    = process.env.MEXC_API_KEY    || '';
 const API_SECRET = process.env.MEXC_API_SECRET || '';
@@ -18,9 +16,6 @@ const FIL_SYM    = 'FILECOIN_USDT';
 const RECV_WIN   = '5000';
 
 // ── SIGNATURE ─────────────────────────────────────────────────────────────────
-// MEXC Futures: HMAC-SHA256( timestamp + apiKey + recvWindow + body, secretKey )
-// For GET:  body = raw query string (key=val&key=val)
-// For POST: body = JSON-encoded body string
 function sign(timestamp, body) {
   const msg = timestamp + API_KEY + RECV_WIN + (body || '');
   return crypto.createHmac('sha256', API_SECRET).update(msg).digest('hex');
@@ -64,10 +59,43 @@ async function mexcGet(endpoint, params = {}) {
 }
 
 // ── PUBLIC KLINE PROXY (no auth) ──────────────────────────────────────────────
+// Uses req.query.symbol so all pairs (FIL, XRP, SNX, CRV, ATOM) get their own data.
+// Cache-Control: no-store prevents Railway/CDN from serving one symbol's data for another.
 app.get('/proxy/mexc/kline', async (req, res) => {
   try {
-    const r = await axios.get(`${MEXC_BASE}/api/v1/contract/kline/${FIL_SYM}`, {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    const symbol = req.query.symbol || FIL_SYM;
+    const r = await axios.get(`${MEXC_BASE}/api/v1/contract/kline/${symbol}`, {
       params: { interval: req.query.interval || 'Min1', limit: req.query.limit || 25 },
+      timeout: 10000,
+    });
+    res.json(r.data);
+  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+});
+
+// ── PUBLIC DEPTH PROXY (no auth) ──────────────────────────────────────────────
+app.get('/proxy/mexc/depth', async (req, res) => {
+  try {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    const symbol = req.query.symbol || FIL_SYM;
+    const r = await axios.get(`${MEXC_BASE}/api/v1/contract/depth/${symbol}`, {
+      params: { limit: req.query.limit || 10 },
+      timeout: 10000,
+    });
+    res.json(r.data);
+  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+});
+
+// ── PUBLIC TICKER PROXY (no auth) ─────────────────────────────────────────────
+app.get('/proxy/mexc/ticker', async (req, res) => {
+  try {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    const symbol = req.query.symbol || FIL_SYM;
+    const r = await axios.get(`${MEXC_BASE}/api/v1/contract/ticker`, {
+      params: { symbol },
       timeout: 10000,
     });
     res.json(r.data);
@@ -87,8 +115,7 @@ app.get('/api/fil/health', async (req, res) => {
   }
 });
 
-// ── SET LEVERAGE (call once before first trade) ───────────────────────────────
-// Body: { leverage: 50, openType: 1 }  (openType 1=isolated, 2=cross)
+// ── SET LEVERAGE ──────────────────────────────────────────────────────────────
 app.post('/api/fil/leverage', async (req, res) => {
   try {
     const data = await mexcPost('/api/v1/private/position/change_leverage', {
@@ -101,9 +128,6 @@ app.post('/api/fil/leverage', async (req, res) => {
 });
 
 // ── OPEN LONG (limit buy) ─────────────────────────────────────────────────────
-// Body: { price: "1.234", vol: 100 }
-// price = entry price (band lower), vol = number of contracts
-// side 1 = open long, type 1 = limit, openType 1 = isolated margin
 app.post('/api/fil/order/open', async (req, res) => {
   try {
     const data = await mexcPost('/api/v1/private/order/submit', {
@@ -120,9 +144,7 @@ app.post('/api/fil/order/open', async (req, res) => {
   } catch (e) { res.status(500).json({ success: false, message: e.message }); }
 });
 
-// ── PLACE TP — limit sell to close long ──────────────────────────────────────
-// Body: { price: "1.235", vol: 100 }
-// side 3 = close long, type 1 = limit
+// ── PLACE TP ──────────────────────────────────────────────────────────────────
 app.post('/api/fil/order/tp', async (req, res) => {
   try {
     const data = await mexcPost('/api/v1/private/order/submit', {
@@ -139,10 +161,7 @@ app.post('/api/fil/order/tp', async (req, res) => {
   } catch (e) { res.status(500).json({ success: false, message: e.message }); }
 });
 
-// ── PLACE SL — stop-market plan order to close long ──────────────────────────
-// Body: { triggerPrice: "1.232", vol: 100 }
-// Uses MEXC plan order endpoint for stop-market execution.
-// triggerType 1 = last price, matchType 2 = market execution, side 3 = close long
+// ── PLACE SL ──────────────────────────────────────────────────────────────────
 app.post('/api/fil/order/sl', async (req, res) => {
   try {
     const data = await mexcPost('/api/v1/private/planorder/place', {
@@ -159,8 +178,7 @@ app.post('/api/fil/order/sl', async (req, res) => {
   } catch (e) { res.status(500).json({ success: false, message: e.message }); }
 });
 
-// ── CANCEL REGULAR ORDER (entry / TP) ────────────────────────────────────────
-// Body: { orderId: "..." }
+// ── CANCEL REGULAR ORDER ──────────────────────────────────────────────────────
 app.post('/api/fil/order/cancel', async (req, res) => {
   try {
     const data = await mexcPost('/api/v1/private/order/cancel', {
@@ -172,7 +190,6 @@ app.post('/api/fil/order/cancel', async (req, res) => {
 });
 
 // ── CANCEL PLAN ORDER (SL) ────────────────────────────────────────────────────
-// Body: { orderId: "..." }
 app.post('/api/fil/planorder/cancel', async (req, res) => {
   try {
     const data = await mexcPost('/api/v1/private/planorder/cancel', {
@@ -202,9 +219,7 @@ app.get('/api/fil/position', async (req, res) => {
   } catch (e) { res.status(500).json({ success: false, message: e.message }); }
 });
 
-// ── CLOSE ALL (market close of entire FIL long position) ─────────────────────
-// Emergency fallback — closes at market price regardless of TP/SL
-// Body: { vol: 100 }
+// ── CLOSE ALL ─────────────────────────────────────────────────────────────────
 app.post('/api/fil/closeall', async (req, res) => {
   try {
     const data = await mexcPost('/api/v1/private/order/submit', {
