@@ -14,6 +14,8 @@ app.use(express.static(path.join(__dirname, 'public')));
 // Proxy to MEXC futures kline
 app.get('/proxy/mexc/kline', async (req, res) => {
   try {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
     const symbol = req.query.symbol || '';
     const response = await axios.get(
       `https://contract.mexc.com/api/v1/contract/kline/${symbol}`,
@@ -28,6 +30,8 @@ app.get('/proxy/mexc/kline', async (req, res) => {
 // Proxy to MEXC futures order book depth
 app.get('/proxy/mexc/depth', async (req, res) => {
   try {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
     const symbol = req.query.symbol || '';
     const response = await axios.get(
       `https://contract.mexc.com/api/v1/contract/depth/${symbol}`,
@@ -42,6 +46,8 @@ app.get('/proxy/mexc/depth', async (req, res) => {
 // Proxy to MEXC futures ticker
 app.get('/proxy/mexc/ticker', async (req, res) => {
   try {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
     const symbol = req.query.symbol || '';
     const response = await axios.get(
       'https://contract.mexc.com/api/v1/contract/ticker',
