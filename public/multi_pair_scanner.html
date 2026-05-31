@@ -364,11 +364,11 @@ window.onerror = function(msg, src, line) {
 const TOKEN_CONFIG = {
   FILUSDT: {
     margin: 1000, leverage: 50, notional: 50000, contractSize: 0.01,
-    bestHours: [8,9,10,11,12,13,14,22,23,0], label: 'FIL', tick: 0.001
+    bestHours: [8,9,10,11,12,13,14,15,22,23,0], label: 'FIL', tick: 0.001
   },
   XRPUSDT: {
     margin: 2000, leverage: 50, notional: 100000, contractSize: 1,
-    bestHours: [9,10,11,12,13,14,15,16,17,18], label: 'XRP', tick: 0.0001,
+    bestHours: [9,10,11,12,13,14,15,16,17,18,23,0], label: 'XRP', tick: 0.0001,
     longOnly: true,
   },
   SNXUSDT: {
@@ -377,11 +377,11 @@ const TOKEN_CONFIG = {
   },
   CRVUSDT: {
     margin: 1000, leverage: 50, notional: 50000, contractSize: 1,
-    bestHours: [8,9,10,11,12,13,14,15], label: 'CRV', tick: 0.0001
+    bestHours: [8,9,10,11,12,13,14,15,16,17], label: 'CRV', tick: 0.0001
   },
   ATOMUSDT: {
     margin: 1000, leverage: 50, notional: 50000, contractSize: 1,
-    bestHours: [8,9,10,11,12,13,14,22,23,0], label: 'ATOM', tick: 0.001
+    bestHours: [8,9,10,11,12,13,14,15,16], label: 'ATOM', tick: 0.001
   },
 };
 const SYMBOLS        = ['FILUSDT', 'XRPUSDT', 'SNXUSDT', 'CRVUSDT', 'ATOMUSDT'];
