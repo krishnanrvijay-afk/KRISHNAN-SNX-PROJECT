@@ -1394,7 +1394,21 @@ function renderCombined() {
 function renderTicker(sym) {
   const st  = state[sym];
   const cfg = TOKEN_CONFIG[sym];
-  if (!st.lastPrice) return;
+  if (!st.lastPrice) {
+      const card = document.getElementById('card_' + sym);
+      if (card) {
+        const nextOpen = TOKEN_CONFIG[sym].bestHours[0];
+        card.className = 'ticker-card border-wait';
+        card.innerHTML =
+          '<div style="padding:10px 12px">' +
+          '<div style="font-weight:700;letter-spacing:1px;color:var(--muted);font-size:12px">' +
+          TOKEN_CONFIG[sym].label + '</div>' +
+          '<div style="font-size:10px;color:#4a6272;margin-top:4px">OUTSIDE HOURS · ' +
+          'next window ' + String(nextOpen).padStart(2,'0') + ':00 EDT</div>' +
+          '</div>';
+      }
+      return;
+    }
 
   const card = document.getElementById('card_'+sym);
   if (!card) return;
