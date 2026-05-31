@@ -1008,6 +1008,8 @@ async function processSym(sym) {
   // Skip polling during per-symbol blackout unless a band is held or a trade is live
   if (inBlackoutSym(sym) && !st.zwHeldTs && !st.inOsc) {
     dp(sym, p+'.1', 'BLACKOUT SKIP', 'no poll — outside best hours ['+TOKEN_CONFIG[sym].bestHours.map(h=>String(h).padStart(2,'0')+':00').join(' ')+' EDT]', 'muted');
+    st.action = 'WAIT';
+    renderTicker(sym);
     return;
   }
 
